@@ -5,10 +5,14 @@
 #ifndef PROTOCOL_H_
 #define PROTOCOL_H_
 
+#include <stddef.h>
 #include <stdint.h>
 
+/* Types of packets */
 #define PROTO_CONN_GREET10    1
 #define PROTO_CONN_RESP41     2
+
+#include "protocol-flags.h"
 
 typedef struct proto_str {
     uint16_t  len;

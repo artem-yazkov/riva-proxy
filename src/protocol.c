@@ -1,0 +1,226 @@
+/*
+ * protocol.c
+ */
+#include "protocol.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+typedef struct __buffer {
+    char   *data;
+    size_t  dlen;
+    size_t  dsize;
+    size_t  cursor;
+} __buffer_t;
+
+#define BUFFER_INC_SIZE       4096
+#define BUFFER_FIELD_INC_SIZE   64
+
+static void
+__buffer_dump(__buffer_t *buf, size_t offset)
+{
+    int ichar, icolumn = 0;
+    for (ichar = 0; ichar < (buf->dlen + offset); ichar++) {
+        if (ichar < offset) {
+            printf("   ");
+        } else {
+            printf("%02X ", buf->data[ichar - offset] & 0xff);
+        }
+
+        icolumn++;
+        if (icolumn == 8) {
+            printf(" ");
+        } else if (icolumn == 16) {
+            printf("\n");
+            icolumn = 0;
+        }
+    }
+}
+
+static void
+__buffer_restore(__buffer_t *buf, char *dump)
+{
+    buf->cursor = buf->dlen = 0;
+    while (*dump && !isalnum(*dump)) {
+        dump++;
+    }
+
+    while (*dump) {
+        if (buf->dlen == buf->dsize) {
+            buf->dsize += BUFFER_INC_SIZE;
+            buf->data = realloc(buf->data, buf->dsize);
+        }
+        sscanf(dump, "%X", &buf->data[buf->dlen++]);
+        while (*dump && isalnum(*dump)) {
+            dump++;
+        }
+        while (*dump && !isalnum(*dump)) {
+            dump++;
+        }
+    }
+}
+
+static inline int
+__field_read(__buffer_t *buf, void *fbody, size_t fsize)
+{
+    if (buf->cursor + fsize > buf->dlen) {
+        return -1;
+    }
+    if (fbody != NULL) {
+        memcpy(fbody, buf->data + buf->cursor, fsize);
+    }
+    buf->cursor += fsize;
+    return 0;
+}
+
+static inline void
+__field_read_str(__buffer_t *buf, proto_str_t *str, size_t fsize)
+{
+    int isnullstr = (fsize == 0);
+    if (fsize == 0) {
+        for (; (buf->cursor + fsize <= buf->dlen) && buf->data[buf->cursor + fsize];
+                fsize++);
+    }
+    if (str->sz < fsize+1) {
+        str->sz = fsize+1;
+        str->data = realloc(str->data, str->sz);
+    }
+    str->len = fsize;
+    __field_read(buf, str->data, str->len);
+    str->data[fsize] = '\0';
+
+    if (isnullstr) {
+        __field_read(buf, NULL, 1);
+    }
+}
+
+static inline void
+__field_read_lenenc(__buffer_t *buf, uint64_t *val)
+{
+    __field_read(buf, val, 1);
+    if (*val < 0xfb) {
+        return;
+
+    } else if (*val == 0xfc) {
+        __field_read(buf, val, 2);
+
+    } else if (*val == 0xfd) {
+        __field_read(buf, val, 3);
+
+    } else {
+        __field_read(buf, val, 8);
+    }
+}
+
+static inline void
+__field_write(__buffer_t *buf, void *fbody, size_t fsize)
+{
+    if (buf->cursor + fsize > buf->dsize) {
+        buf->dsize += BUFFER_INC_SIZE;
+        buf->data = realloc(buf->data, buf->dsize);
+    }
+    if (fbody != NULL) {
+        memcpy(buf->data + buf->cursor, fbody, fsize);
+    } else {
+        memset(buf->data + buf->cursor, 0, fsize);
+    }
+    buf->cursor += fsize;
+    buf->dlen = buf->cursor;
+}
+
+static inline void
+__field_write_lenenc(__buffer_t *buf, uint64_t val)
+{
+    if (val < 0xfb) {
+        __field_write(buf, &val, 1);
+
+    } else if (val < 0xffff) {
+        char flag = 0xfc;
+        __field_write(buf, &flag, 1);
+        __field_write(buf, &val,  2);
+
+    } else if (val < 0xffffff) {
+        char flag = 0xfd;
+        __field_write(buf, &flag, 1);
+        __field_write(buf, &val,  3);
+
+    } else {
+        char flag = 0xfe;
+        __field_write(buf, &flag, 1);
+        __field_write(buf, &val,  8);
+
+    }
+}
+
+static int
+__writepack_conn_greet10(__buffer_t *buf, void *pbody, size_t psize)
+{
+    proto_conn_greet10_t *p = pbody;
+    if (psize != sizeof(*p)) {
+        return -1;
+    }
+
+    __field_write(buf, &p->pversion, 1);
+    __field_write(buf,  p->sversion.data, p->sversion.len + 1);
+    __field_write(buf, &p->connid, 4);
+    __field_write(buf,  p->salt.data, 8);
+    __field_write(buf,  NULL, 1);
+
+    __field_write(buf, ((char *)(&p->capab_fs) + 0), 2);
+    __field_write(buf, &p->charset, 1);
+    __field_write(buf, &p->status_fs, 2);
+    __field_write(buf, ((char *)(&p->capab_fs) + 2), 2);
+
+    __field_write(buf, &p->auth_plug_name.len, 1);
+
+    __field_write(buf, NULL, 10);
+    __field_write(buf, &p->salt.data[8], (p->salt.len - 8));
+    if (13 - (p->salt.len - 8) > 0) {
+        __field_write(buf, NULL, 13 - (p->salt.len - 8));
+    }
+
+    __field_write(buf, p->auth_plug_name.data, p->auth_plug_name.len+1);
+
+    return 0;
+}
+
+static int
+__readpack_conn_resp41(__buffer_t *buf, void *pbody, size_t psize)
+{
+    proto_conn_resp41_t *p = pbody;
+    if (psize != sizeof(*p)) {
+        return -1;
+    }
+
+    __field_read(buf, &p->capab_fs, 4);
+    __field_read(buf, &p->max_packet_size, 4);
+    __field_read(buf, &p->charset, 1);
+    __field_read(buf, NULL, 23);
+
+    __field_read_str(buf, &p->username, 0);
+    __field_read(buf, &p->password.len, 1);
+    __field_read_str(buf, &p->password, p->password.len);
+    __field_read_str(buf, &p->schema, 0);
+
+    return 0;
+}
+
+int proto_pack_read(void *evbuf, int ptype, void *pbody, size_t psize)
+{
+    char *dump = evbuf;
+    static __buffer_t buffer;
+    __buffer_restore(&buffer, dump);
+    __readpack_conn_resp41(&buffer, pbody, psize);
+
+    return 0;
+}
+
+int proto_pack_write(void *evbuf, int ptype, void *pbody, size_t psize)
+{
+    static __buffer_t buffer;
+    __writepack_conn_greet10(&buffer, pbody, psize);
+    __buffer_dump(&buffer, 6);
+    printf("\n");
+    return 0;
+}
