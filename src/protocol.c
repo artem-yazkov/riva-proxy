@@ -206,6 +206,116 @@ __readpack_conn_resp41(__buffer_t *buf, void *pbody, size_t psize)
     return 0;
 }
 
+static int
+__readpack_req_query(__buffer_t *buf, void *pbody, size_t psize)
+{
+    proto_req_query_t *p = pbody;
+    if (psize != sizeof(*p)) {
+        return -1;
+    }
+    __field_read_str(buf, &p->query, 0);
+    return 0;
+}
+
+static int
+__writepack_resp_ok(__buffer_t *buf, void *pbody, size_t psize)
+{
+    proto_resp_ok_t *p = pbody;
+    if (psize != sizeof(*p)) {
+        return -1;
+    }
+    char header = 0x00;
+    __field_write(buf, &header, 1);
+    __field_write_lenenc(buf, p->affected_rows);
+    __field_write_lenenc(buf, p->last_insert_id);
+    __field_write(buf, &p->status_fl, 2);
+    __field_write(buf, &p->warnings, 2);
+
+}
+
+static int
+__writepack_resp_eof(__buffer_t *buf, void *pbody, size_t psize)
+{
+    proto_resp_eof_t *p = pbody;
+    if (psize != sizeof(*p)) {
+        return -1;
+    }
+    char header = 0xfe;
+    __field_write(buf, &header, 1);
+    __field_write(buf, &p->warnings, 2);
+    __field_write(buf, &p->status_fl, 2);
+}
+
+static int
+__writepack_resp_err(__buffer_t *buf, void *pbody, size_t psize)
+{
+    proto_resp_err_t *p = pbody;
+    if (psize != sizeof(*p)) {
+        return -1;
+    }
+    char header = 0xff;
+    char marker = '#';
+    __field_write(buf, &header, 1);
+    __field_write(buf, &p->err_code, 2);
+    __field_write(buf, &marker, 1);
+    __field_write(buf, &p->sql_state, 5);
+    __field_read_str(buf, &p->message, 0);
+}
+
+static int
+__writepack_resp_fcount(__buffer_t *buf, void *pbody, size_t psize)
+{
+    proto_resp_fcount_t *p = pbody;
+    if (psize != sizeof(*p)) {
+        return -1;
+    }
+    __field_write_lenenc(buf, p->fcount);
+}
+
+static int
+__writepack_resp_field(__buffer_t *buf, void *pbody, size_t psize)
+{
+    proto_resp_field_t *p = pbody;
+    if (psize != sizeof(*p)) {
+        return -1;
+    }
+    __field_write_lenenc(buf, p->catalog.len);
+    __field_write(buf, p->catalog.data, p->catalog.len);
+    __field_write_lenenc(buf, p->schema.len);
+    __field_write(buf, p->schema.data, p->schema.len);
+    __field_write_lenenc(buf, p->table.len);
+    __field_write(buf, p->table.data, p->table.len);
+    __field_write_lenenc(buf, p->org_table.len);
+    __field_write(buf, p->org_table.data, p->org_table.len);
+    __field_write_lenenc(buf, p->name.len);
+    __field_write(buf, p->name.data, p->name.len);
+    __field_write_lenenc(buf, p->org_name.len);
+    __field_write(buf, p->org_name.data, p->org_name.len);
+
+    char marker = 0x0c;
+    __field_write(buf, &marker, 1);
+    __field_write(buf, &p->charset, 2);
+    __field_write(buf, &p->length, 4);
+    __field_write(buf, &p->type, 1);
+    __field_write(buf, &p->flags, 2);
+    __field_write(buf, &p->decimals, 1);
+    __field_write(buf, NULL, 2);
+}
+
+static int
+__writepack_resp_row(__buffer_t *buf, void *pbody, size_t psize)
+{
+    proto_resp_row_t *p = pbody;
+    if (psize != sizeof(*p)) {
+        return -1;
+    }
+    int ival;
+    for (ival = 0; ival < p->values_cnt; ival++) {
+        __field_write_lenenc(buf, p->values[ival].len);
+        __field_write(buf, p->values[ival].data, p->values[ival].len);
+    }
+}
+
 int proto_pack_read(void *evbuf, int ptype, void *pbody, size_t psize)
 {
     char *dump = evbuf;
