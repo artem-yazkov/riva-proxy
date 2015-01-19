@@ -62,11 +62,11 @@ int main()
     proto_pack_read((char *)resp41hex, PROTO_CONN_RESP41, &presp, sizeof(presp));
     printf("presp.capab_fs       : %X\n", presp.capab_fs);
     printf("presp.max_packet_size: %d\n", presp.max_packet_size);
-    printf("presp.charset:         %d\n", presp.charset);
-    printf("presp.username:        %s\n", presp.username.data);
-    printf("presp.password.len:    %d\n", presp.password.len);
-    printf("presp.password:        %s\n", dbg_hexprint(presp.password.data, presp.password.len));
-    printf("presp.schema:          %s\n", presp.schema.data);
+    printf("presp.charset        : %d\n", presp.charset);
+    printf("presp.username       : %s\n", presp.username.data);
+    printf("presp.password.len   : %d\n", presp.password.len);
+    printf("presp.password       : %s\n", dbg_hexprint(presp.password.data, presp.password.len));
+    printf("presp.schema         : %s\n", presp.schema.data);
 
     return 0;
 }
