@@ -7,17 +7,21 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <event2/buffer.h>
 
 /* Types of packets */
-#define PROTO_CONN_GREET10    1
-#define PROTO_CONN_RESP41     2
-#define PROTO_REQ_QUERY       3
-#define PROTO_RESP_OK         4
-#define PROTO_RESP_ERR        5
-#define PROTO_RESP_EOF        6
-#define PROTO_RESP_FCOUNT     7
-#define PROTO_RESP_FIELD      8
-#define PROTO_RESP_ROW        9
+#define PROTO_TYPE_ALL        0xFFFF
+#define PROTO_TYPE_REQ        0xFF00
+
+#define PROTO_CONN_GREET10    0x0001
+#define PROTO_CONN_RESP41     0x0002
+#define PROTO_RESP_OK         0x0010
+#define PROTO_RESP_ERR        0x0020
+#define PROTO_RESP_EOF        0x0030
+#define PROTO_RESP_FCOUNT     0x0040
+#define PROTO_RESP_FIELD      0x0050
+#define PROTO_RESP_ROW        0x0060
+#define PROTO_REQ_QUERY       0x0300
 
 #include "protocol-flags.h"
 
@@ -99,8 +103,10 @@ typedef struct proto_resp_row {
     proto_str_t *values;
 } proto_resp_row_t;
 
-int proto_pack_read(void *evbuf, int ptype, void *pbody, size_t psize);
+int proto_pack_look(struct evbuffer *evbuf, uint8_t *rtype, uint8_t *psec, size_t *psize);
 
-int proto_pack_write(void *evbuf, int ptype, void *pbody, size_t psize);
+int proto_pack_read(struct evbuffer *evbuf, int ptype, void *pbody, size_t psize);
+
+int proto_pack_write(struct evbuffer *evbuf, int ptype, void *pbody, size_t psize);
 
 #endif /* PROTOCOL_H_ */

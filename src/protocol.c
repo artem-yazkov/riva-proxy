@@ -1,6 +1,7 @@
 /*
  * protocol.c
  */
+
 #include "protocol.h"
 
 #include <stdio.h>
@@ -16,6 +17,8 @@ typedef struct __buffer {
 
 #define BUFFER_INC_SIZE       4096
 #define BUFFER_FIELD_INC_SIZE   64
+
+static uint64_t sequence_id;
 
 static void
 __buffer_dump(__buffer_t *buf, size_t offset)
@@ -224,6 +227,7 @@ __writepack_resp_ok(__buffer_t *buf, void *pbody, size_t psize)
     if (psize != sizeof(*p)) {
         return -1;
     }
+
     char header = 0x00;
     __field_write(buf, &header, 1);
     __field_write_lenenc(buf, p->affected_rows);
@@ -231,6 +235,7 @@ __writepack_resp_ok(__buffer_t *buf, void *pbody, size_t psize)
     __field_write(buf, &p->status_fl, 2);
     __field_write(buf, &p->warnings, 2);
 
+    return 0;
 }
 
 static int
@@ -240,10 +245,13 @@ __writepack_resp_eof(__buffer_t *buf, void *pbody, size_t psize)
     if (psize != sizeof(*p)) {
         return -1;
     }
+
     char header = 0xfe;
     __field_write(buf, &header, 1);
     __field_write(buf, &p->warnings, 2);
     __field_write(buf, &p->status_fl, 2);
+
+    return 0;
 }
 
 static int
@@ -253,6 +261,7 @@ __writepack_resp_err(__buffer_t *buf, void *pbody, size_t psize)
     if (psize != sizeof(*p)) {
         return -1;
     }
+
     char header = 0xff;
     char marker = '#';
     __field_write(buf, &header, 1);
@@ -260,6 +269,8 @@ __writepack_resp_err(__buffer_t *buf, void *pbody, size_t psize)
     __field_write(buf, &marker, 1);
     __field_write(buf, &p->sql_state, 5);
     __field_read_str(buf, &p->message, 0);
+
+    return 0;
 }
 
 static int
@@ -270,6 +281,7 @@ __writepack_resp_fcount(__buffer_t *buf, void *pbody, size_t psize)
         return -1;
     }
     __field_write_lenenc(buf, p->fcount);
+    return 0;
 }
 
 static int
@@ -300,6 +312,8 @@ __writepack_resp_field(__buffer_t *buf, void *pbody, size_t psize)
     __field_write(buf, &p->flags, 2);
     __field_write(buf, &p->decimals, 1);
     __field_write(buf, NULL, 2);
+
+    return 0;
 }
 
 static int
@@ -314,23 +328,93 @@ __writepack_resp_row(__buffer_t *buf, void *pbody, size_t psize)
         __field_write_lenenc(buf, p->values[ival].len);
         __field_write(buf, p->values[ival].data, p->values[ival].len);
     }
+    return 0;
 }
 
-int proto_pack_read(void *evbuf, int ptype, void *pbody, size_t psize)
+int proto_pack_look(struct evbuffer *evbuf, uint8_t *rtype, uint8_t *psec, size_t *psize)
 {
-    char *dump = evbuf;
-    static __buffer_t buffer;
-    __buffer_restore(&buffer, dump);
-    __readpack_conn_resp41(&buffer, pbody, psize);
+    uint8_t phdr[5];
+    if (evbuffer_get_length(evbuf) < sizeof(phdr)) {
+        return -1;
+    }
+    evbuffer_copyout(evbuf, phdr, sizeof(phdr));
+    memcpy(psize, phdr, 3);
+    *psec = phdr[3];
+    *rtype = phdr[4];
+
+    if (evbuffer_get_length(evbuf) < *psize + 5) {
+        return -1;
+    }
 
     return 0;
 }
 
-int proto_pack_write(void *evbuf, int ptype, void *pbody, size_t psize)
+int proto_pack_read(struct evbuffer *evbuf, int ptype, void *pbody, size_t psize)
+{
+    if (evbuffer_get_length(evbuf) < 5) {
+        return -1;
+    }
+    static __buffer_t buffer;
+    buffer.cursor = buffer.dlen = 0;
+
+    evbuffer_remove(evbuf, &buffer.dlen, 3);
+    evbuffer_remove(evbuf, &sequence_id, 1);
+
+    if (buffer.dlen < buffer.dsize) {
+        buffer.dsize = buffer.dlen;
+        buffer.data = realloc(evbuf, buffer.dsize);
+    }
+    evbuffer_remove(evbuf, &buffer.data, buffer.dlen);
+
+    if (ptype == PROTO_CONN_RESP41) {
+        return __readpack_conn_resp41(&buffer, pbody, psize);
+    }
+    if (ptype == PROTO_REQ_QUERY) {
+        __field_read(&buffer, NULL, 1);
+        return __readpack_req_query(&buffer, pbody, psize);
+    }
+
+    return -1;
+}
+
+int proto_pack_write(struct evbuffer *evbuf, int ptype, void *pbody, size_t psize)
 {
     static __buffer_t buffer;
-    __writepack_conn_greet10(&buffer, pbody, psize);
-    __buffer_dump(&buffer, 6);
-    printf("\n");
+    buffer.cursor = buffer.dlen = 0;
+
+    switch (ptype) {
+    case PROTO_CONN_GREET10:
+        sequence_id = 0;
+        __writepack_conn_greet10(&buffer, pbody, psize);
+        //__buffer_dump(&buffer, 6);
+        //printf("\n");
+        break;
+    case PROTO_RESP_EOF:
+        __writepack_resp_eof(&buffer, pbody, psize);
+        break;
+    case PROTO_RESP_ERR:
+        __writepack_resp_err(&buffer, pbody, psize);
+        break;
+    case PROTO_RESP_OK:
+        __writepack_resp_ok(&buffer, pbody, psize);
+        break;
+    case PROTO_RESP_FCOUNT:
+        __writepack_resp_fcount(&buffer, pbody, psize);
+        break;
+    case PROTO_RESP_FIELD:
+        __writepack_resp_field(&buffer, pbody, psize);
+        break;
+    case PROTO_RESP_ROW:
+        __writepack_resp_row(&buffer, pbody, psize);
+        break;
+    default:
+        return -1;
+    }
+
+    evbuffer_add(evbuf, &buffer.dlen, 3);
+    evbuffer_add(evbuf, &sequence_id, 1);
+    evbuffer_add(evbuf, buffer.data, buffer.dlen);
+    sequence_id++;
+
     return 0;
 }
