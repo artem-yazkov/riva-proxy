@@ -2,6 +2,8 @@
 #include <event2/bufferevent.h>
 #include <event2/buffer.h>
 
+#include <mysql/mysql.h>
+
 #include <arpa/inet.h>
 
 #include <string.h>
@@ -10,6 +12,8 @@
 #include <errno.h>
 
 #include "protocol.h"
+
+static  MYSQL *mconnect;
 
 static void
 echo_read_cb(struct bufferevent *bev, void *ctx)
@@ -44,43 +48,54 @@ echo_read_cb(struct bufferevent *bev, void *ctx)
         proto_pack_read(input, PROTO_REQ_QUERY, &rquery, sizeof(rquery));
         printf("rquery.query.data : %s\n", rquery.query.data);
         if (rquery.query.len > 0) {
-            static proto_resp_fcount_t rfcount;
-            rfcount.fcount = 1;
+            if (mysql_query(mconnect, rquery.query.data)) {
+                printf("can't execute query: %s\n", rquery.query.data);
+            }
 
+            MYSQL_RES *mresult = mysql_store_result(mconnect);
+            static proto_resp_fcount_t rfcount;
+            rfcount.fcount = mysql_num_fields(mresult);
+            proto_pack_write(output, PROTO_RESP_FCOUNT, &rfcount, sizeof(rfcount));
+
+            MYSQL_FIELD *mfield;
             static proto_resp_field_t  rfield;
-            rfield.catalog.data = "def";
-            rfield.catalog.len = strlen(rfield.catalog.data);
-            rfield.name.data = "@@version_comment";
-            rfield.name.len = strlen(rfield.name.data);
-            rfield.charset = 33;
-            rfield.length = 255;
-            rfield.type = 253;
-            rfield.decimals = 31;
+            while ((mfield = mysql_fetch_field(mresult))) {
+                printf("field name: %s\n", mfield->name);
+                rfield.catalog.data = "def";
+                rfield.catalog.len = strlen(rfield.catalog.data);
+                rfield.name.data = mfield->name;
+                rfield.name.len = strlen(rfield.name.data);
+                rfield.charset = 33;
+                rfield.length = 255;
+                rfield.type = 253;
+                rfield.decimals = 31;
+                proto_pack_write(output, PROTO_RESP_FIELD, &rfield, sizeof(rfield));
+            }
 
             static proto_resp_eof_t reof;
             reof.status_fl = 0x0002;
+            proto_pack_write(output, PROTO_RESP_EOF, &reof, sizeof(reof));
 
             static proto_resp_row_t rrow;
-            rrow.values_cnt = 1;
-            rrow.values = calloc(1, sizeof(proto_str_t));
-            rrow.values[0].data = rquery.query.data;
-            rrow.values[0].len = strlen(rrow.values[0].data);
+            rrow.values_cnt = rfcount.fcount;
+            if (rrow.values_sz < rfcount.fcount) {
+                rrow.values_sz = rfcount.fcount;
+                rrow.values = realloc(rrow.values, rrow.values_sz * sizeof(proto_str_t));
+                memset(rrow.values, 0, rrow.values_sz * sizeof(proto_str_t));
+            }
 
-            proto_pack_write(output, PROTO_RESP_FCOUNT, &rfcount, sizeof(rfcount));
-            proto_pack_write(output, PROTO_RESP_FIELD, &rfield, sizeof(rfield));
-            proto_pack_write(output, PROTO_RESP_EOF, &reof, sizeof(reof));
-            proto_pack_write(output, PROTO_RESP_ROW, &rrow, sizeof(rrow));
+            MYSQL_ROW mrow;
+            while ((mrow = mysql_fetch_row(mresult))) {
+                int irow;
+                for(irow = 0; irow < rfcount.fcount; irow++) {
+                    rrow.values[irow].data = mrow[irow];
+                    rrow.values[irow].len = strlen(rrow.values[irow].data);
+                }
+                proto_pack_write(output, PROTO_RESP_ROW, &rrow, sizeof(rrow));
+            }
             proto_pack_write(output, PROTO_RESP_EOF, &reof, sizeof(reof));
         }
     }
-
-    //char out_s[1024];
-    //ev_ssize_t sz = evbuffer_copyout(input, out_s, sizeof(out_s));
-    //printf("readed from buffer: %ld\n", sz);
-    //printf("%s\n", out_s);
-
-    /* Copy all the data from the input buffer to the output buffer. */
-    //evbuffer_add_buffer(output, input);
 }
 
 static void
@@ -128,6 +143,12 @@ accept_conn_cb(struct evconnlistener *listener,
     pgreet.auth_plug_name.len = strlen(pgreet.auth_plug_name.data);
     proto_pack_write(bufferevent_get_output(bev), PROTO_CONN_GREET10, &pgreet, sizeof(pgreet));
 
+    mconnect = mysql_init(NULL);
+    MYSQL *rconnect =  mysql_real_connect(mconnect, "127.0.0.1", NULL, NULL, NULL, 0, NULL, 0);
+    if (rconnect != NULL) {
+        printf("connect to mysql db");
+    }
+
 }
 
 static void
@@ -148,7 +169,7 @@ main(int argc, char **argv)
     struct evconnlistener *listener;
     struct sockaddr_in sin;
 
-    int port = 3306;
+    int port = 9876;
 
     if (argc > 1) {
         port = atoi(argv[1]);

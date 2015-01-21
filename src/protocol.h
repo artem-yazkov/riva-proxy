@@ -100,6 +100,7 @@ typedef struct proto_resp_field {
 
 typedef struct proto_resp_row {
     size_t       values_cnt;
+    size_t       values_sz;
     proto_str_t *values;
 } proto_resp_row_t;
 
