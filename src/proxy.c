@@ -13,7 +13,8 @@
 
 #include "protocol.h"
 
-static  MYSQL *mconnect;
+static  MYSQL *mconn0;
+static  MYSQL *mconn1;
 
 static void
 echo_read_cb(struct bufferevent *bev, void *ctx)
@@ -48,18 +49,23 @@ echo_read_cb(struct bufferevent *bev, void *ctx)
         proto_pack_read(input, PROTO_REQ_QUERY, &rquery, sizeof(rquery));
         printf("rquery.query.data : %s\n", rquery.query.data);
         if (rquery.query.len > 0) {
-            if (mysql_query(mconnect, rquery.query.data)) {
+            if (mysql_query(mconn0, rquery.query.data)) {
+                printf("can't execute query: %s\n", rquery.query.data);
+            }
+            if (mysql_query(mconn1, rquery.query.data)) {
                 printf("can't execute query: %s\n", rquery.query.data);
             }
 
-            MYSQL_RES *mresult = mysql_store_result(mconnect);
+            MYSQL_RES *mresult0 = mysql_store_result(mconn0);
+            MYSQL_RES *mresult1 = mysql_store_result(mconn1);
+
             static proto_resp_fcount_t rfcount;
-            rfcount.fcount = mysql_num_fields(mresult);
+            rfcount.fcount = mysql_num_fields(mresult0);
             proto_pack_write(output, PROTO_RESP_FCOUNT, &rfcount, sizeof(rfcount));
 
             MYSQL_FIELD *mfield;
             static proto_resp_field_t  rfield;
-            while ((mfield = mysql_fetch_field(mresult))) {
+            while ((mfield = mysql_fetch_field(mresult0))) {
                 printf("field name: %s\n", mfield->name);
                 rfield.catalog.data = "def";
                 rfield.catalog.len = strlen(rfield.catalog.data);
@@ -85,7 +91,15 @@ echo_read_cb(struct bufferevent *bev, void *ctx)
             }
 
             MYSQL_ROW mrow;
-            while ((mrow = mysql_fetch_row(mresult))) {
+            while ((mrow = mysql_fetch_row(mresult0))) {
+                int irow;
+                for(irow = 0; irow < rfcount.fcount; irow++) {
+                    rrow.values[irow].data = mrow[irow];
+                    rrow.values[irow].len = strlen(rrow.values[irow].data);
+                }
+                proto_pack_write(output, PROTO_RESP_ROW, &rrow, sizeof(rrow));
+            }
+            while ((mrow = mysql_fetch_row(mresult1))) {
                 int irow;
                 for(irow = 0; irow < rfcount.fcount; irow++) {
                     rrow.values[irow].data = mrow[irow];
@@ -143,10 +157,16 @@ accept_conn_cb(struct evconnlistener *listener,
     pgreet.auth_plug_name.len = strlen(pgreet.auth_plug_name.data);
     proto_pack_write(bufferevent_get_output(bev), PROTO_CONN_GREET10, &pgreet, sizeof(pgreet));
 
-    mconnect = mysql_init(NULL);
-    MYSQL *rconnect =  mysql_real_connect(mconnect, "127.0.0.1", NULL, NULL, NULL, 0, NULL, 0);
-    if (rconnect != NULL) {
-        printf("connect to mysql db");
+    mconn0 = mysql_init(NULL);
+    MYSQL *rconn0 =  mysql_real_connect(mconn0, "127.0.0.1", "root", "111111", "db0", 0, NULL, 0);
+    if (rconn0 != NULL) {
+        printf("connect to mysql db0");
+    }
+
+    mconn1 = mysql_init(NULL);
+    MYSQL *rconn1 =  mysql_real_connect(mconn1, "127.0.0.1", "root", "111111", "db1", 0, NULL, 0);
+    if (rconn1 != NULL) {
+        printf("connect to mysql db1");
     }
 
 }
