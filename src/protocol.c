@@ -82,13 +82,14 @@ __field_read_str(__buffer_t *buf, proto_str_t *str, size_t fsize)
 {
     int isnullstr = (fsize == 0);
     if (fsize == 0) {
-        for (; (buf->cursor + fsize <= buf->dlen) && buf->data[buf->cursor + fsize];
+        for (; (buf->cursor + fsize < buf->dlen) && buf->data[buf->cursor + fsize];
                 fsize++);
     }
     if (str->sz < fsize+1) {
         str->sz = fsize+1;
         str->data = realloc(str->data, str->sz);
     }
+
     str->len = fsize;
     __field_read(buf, str->data, str->len);
     str->data[fsize] = '\0';
@@ -203,8 +204,14 @@ __readpack_conn_resp41(__buffer_t *buf, void *pbody, size_t psize)
 
     __field_read_str(buf, &p->username, 0);
     __field_read(buf, &p->password.len, 1);
-    __field_read_str(buf, &p->password, p->password.len);
+    if (p->password.len > 0) {
+        __field_read_str(buf, &p->password, p->password.len);
+    } else {
+        buf->cursor--;
+    }
     __field_read_str(buf, &p->schema, 0);
+    __field_read_str(buf, &p->auth_plug_name, 0);
+    __field_read_str(buf, &p->attr, 0);
 
     return 0;
 }
@@ -360,11 +367,11 @@ int proto_pack_read(struct evbuffer *evbuf, int ptype, void *pbody, size_t psize
     evbuffer_remove(evbuf, &buffer.dlen, 3);
     evbuffer_remove(evbuf, &sequence_id, 1);
 
-    if (buffer.dlen < buffer.dsize) {
+    if (buffer.dlen > buffer.dsize) {
         buffer.dsize = buffer.dlen;
-        buffer.data = realloc(evbuf, buffer.dsize);
+        buffer.data = realloc(buffer.data, buffer.dsize);
     }
-    evbuffer_remove(evbuf, &buffer.data, buffer.dlen);
+    evbuffer_remove(evbuf, buffer.data, buffer.dlen);
 
     if (ptype == PROTO_CONN_RESP41) {
         return __readpack_conn_resp41(&buffer, pbody, psize);
@@ -381,13 +388,12 @@ int proto_pack_write(struct evbuffer *evbuf, int ptype, void *pbody, size_t psiz
 {
     static __buffer_t buffer;
     buffer.cursor = buffer.dlen = 0;
+    sequence_id++;
 
     switch (ptype) {
     case PROTO_CONN_GREET10:
         sequence_id = 0;
         __writepack_conn_greet10(&buffer, pbody, psize);
-        //__buffer_dump(&buffer, 6);
-        //printf("\n");
         break;
     case PROTO_RESP_EOF:
         __writepack_resp_eof(&buffer, pbody, psize);
@@ -414,7 +420,6 @@ int proto_pack_write(struct evbuffer *evbuf, int ptype, void *pbody, size_t psiz
     evbuffer_add(evbuf, &buffer.dlen, 3);
     evbuffer_add(evbuf, &sequence_id, 1);
     evbuffer_add(evbuf, buffer.data, buffer.dlen);
-    sequence_id++;
 
     return 0;
 }
