@@ -333,8 +333,13 @@ __writepack_resp_row(__buffer_t *buf, void *pbody, size_t psize)
     }
     int ival;
     for (ival = 0; ival < p->values_cnt; ival++) {
-        __field_write_lenenc(buf, p->values[ival].len);
-        __field_write(buf, p->values[ival].data, p->values[ival].len);
+        if (p->values[ival].data == NULL) {
+            char marker = 0xfb;
+            __field_write(buf, &marker, 1);
+        } else {
+            __field_write_lenenc(buf, p->values[ival].len);
+            __field_write(buf, p->values[ival].data, p->values[ival].len);
+        }
     }
     return 0;
 }

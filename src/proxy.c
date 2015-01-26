@@ -100,7 +100,7 @@ execute_query(struct evbuffer *output, char *query, proxy_session_t *session)
             int irow;
             for(irow = 0; irow < rfcount.fcount; irow++) {
                 rrow.values[irow].data = mrow[irow];
-                rrow.values[irow].len = strlen(rrow.values[irow].data);
+                rrow.values[irow].len = (mrow[irow]) ? strlen(mrow[irow]) : 0;
             }
             proto_pack_write(output, PROTO_RESP_ROW, &rrow, sizeof(rrow));
         }
