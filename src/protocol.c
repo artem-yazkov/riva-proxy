@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 
 typedef struct __buffer {
     char   *data;
@@ -20,7 +21,7 @@ typedef struct __buffer {
 
 static uint64_t sequence_id;
 
-static void
+static inline void
 __buffer_dump(__buffer_t *buf, size_t offset)
 {
     int ichar, icolumn = 0;
@@ -41,7 +42,7 @@ __buffer_dump(__buffer_t *buf, size_t offset)
     }
 }
 
-static void
+static inline void
 __buffer_restore(__buffer_t *buf, char *dump)
 {
     buf->cursor = buf->dlen = 0;
@@ -54,7 +55,7 @@ __buffer_restore(__buffer_t *buf, char *dump)
             buf->dsize += BUFFER_INC_SIZE;
             buf->data = realloc(buf->data, buf->dsize);
         }
-        sscanf(dump, "%X", &buf->data[buf->dlen++]);
+        sscanf(dump, "%sX", &buf->data[buf->dlen++]);
         while (*dump && isalnum(*dump)) {
             dump++;
         }
@@ -275,7 +276,7 @@ __writepack_resp_err(__buffer_t *buf, void *pbody, size_t psize)
     __field_write(buf, &p->err_code, 2);
     __field_write(buf, &marker, 1);
     __field_write(buf, &p->sql_state, 5);
-    __field_read_str(buf, &p->message, 0);
+    __field_write(buf, p->message.data, p->message.len);
 
     return 0;
 }
