@@ -31,6 +31,7 @@ typedef struct proxy_cfg {
     int  lport;
     proxy_cfg_db_t *db;
     int             db_cnt;
+    int             verbose;
 } proxy_cfg_t;
 
 #define PROXY_SESSPHASE_CONN    0
@@ -91,6 +92,7 @@ execute_query(struct evbuffer *output, char *query, proxy_session_t *session)
         memset(rrow.values, 0, rrow.values_sz * sizeof(proto_str_t));
     }
 
+    int rcount = 0;
     for (int idb = 0; idb < session->db_cnt; idb++) {
         if (idb > 0) {
             mres = mysql_store_result(session->dbc[idb]);
@@ -103,10 +105,15 @@ execute_query(struct evbuffer *output, char *query, proxy_session_t *session)
                 rrow.values[irow].len = (mrow[irow]) ? strlen(mrow[irow]) : 0;
             }
             proto_pack_write(output, PROTO_RESP_ROW, &rrow, sizeof(rrow));
+            rcount++;
         }
     }
 
     proto_pack_write(output, PROTO_RESP_EOF, &reof, sizeof(reof));
+
+    if (proxy_cfg.verbose) {
+        fprintf(stdout, "Q: %s; F: %lu, R: %d\n", query, rfcount.fcount, rcount);
+    }
 }
 
 static void
@@ -120,7 +127,6 @@ cb_read(struct bufferevent *bev, void *ctx)
 
     /* Connection phase: greet response */
     if (session->phase == PROXY_SESSPHASE_CONN) {
-        printf("data from client: %lu\n", evbuffer_get_length(input));
         static proto_conn_resp41_t resp41;
         proto_pack_read(input, PROTO_CONN_RESP41, &resp41, sizeof(resp41));
         printf("resp41.capab_fs       : %X\n", resp41.capab_fs);
@@ -142,10 +148,8 @@ cb_read(struct bufferevent *bev, void *ctx)
 
     /* Query phase */
     if (session->phase == PROXY_SESSPHASE_QUERY) {
-        printf("data from client: %lu\n", evbuffer_get_length(input));
         static proto_req_query_t rquery;
         proto_pack_read(input, PROTO_REQ_QUERY, &rquery, sizeof(rquery));
-        printf("rquery.query.data : %s\n", rquery.query.data);
         if (rquery.query.len > 0) {
             execute_query(output, rquery.query.data, session);
         }
@@ -257,6 +261,7 @@ __process_args(int argc, char * const argv[])
         /* name, has_arg, flag, value */
         { .name = "help"         , no_argument       , NULL , 'h' },
         { .name = "version"      , no_argument       , NULL , 'v' },
+        { .name = "verbose"      , no_argument       , NULL , 'V' },
         { .name = "proxy-address", required_argument , NULL , 'a' },
         { .name = "backend"      , required_argument , NULL , 'b' },
         { NULL                   , 0                 , NULL ,  0  }
@@ -264,7 +269,6 @@ __process_args(int argc, char * const argv[])
     int opt;
 
     while ((opt = getopt_long(argc, argv, "hva:b:", options, NULL)) != -1) {
-        printf("key: %d; value: %s\n", opt, optarg);
         if (opt == 'a') {
             int args;
             /* all arguments */
@@ -322,6 +326,9 @@ __process_args(int argc, char * const argv[])
         }
         if (opt == 'h') {
             __help(NULL);
+        }
+        if (opt == 'V') {
+            proxy_cfg.verbose = 1;
         }
     }
     if (proxy_cfg.db_cnt == 0) {
