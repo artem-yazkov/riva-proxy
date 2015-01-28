@@ -352,7 +352,7 @@ int proto_pack_look(struct evbuffer *evbuf, uint8_t *rtype, uint8_t *psec, size_
     }
     evbuffer_copyout(evbuf, phdr, sizeof(phdr));
     memcpy(psize, phdr, 3);
-    *psec = phdr[3];
+    *psec = sequence_id = phdr[3];
     *rtype = phdr[4];
 
     if (evbuffer_get_length(evbuf) < *psize + 5) {

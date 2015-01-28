@@ -44,6 +44,22 @@ typedef struct proxy_session {
 
 static proxy_cfg_t proxy_cfg;
 
+char* __dbg_hexprint(char *data, size_t size)
+{
+    static char   *output;
+    static size_t  outsize;
+    if (outsize < size*3) {
+        outsize = size*3;
+        output = realloc(output, outsize);
+    }
+    int ichar;
+    for (ichar = 0; ichar < size; ichar++) {
+        sprintf(&output[ichar*3], "%02X ", data[ichar] & 0xff);
+    }
+    output[ichar*3 + 2] = '\0';
+    return output;
+}
+
 static void
 execute_query(struct evbuffer *output, char *query, proxy_session_t *session)
 {
@@ -129,15 +145,17 @@ cb_read(struct bufferevent *bev, void *ctx)
     if (session->phase == PROXY_SESSPHASE_CONN) {
         static proto_conn_resp41_t resp41;
         proto_pack_read(input, PROTO_CONN_RESP41, &resp41, sizeof(resp41));
-        printf("resp41.capab_fs       : %X\n", resp41.capab_fs);
-        printf("resp41.max_packet_size: %d\n", resp41.max_packet_size);
-        printf("resp41.charset        : %d\n", resp41.charset);
-        printf("resp41.username       : %s\n", resp41.username.data);
-        printf("resp41.password.len   : %d\n", resp41.password.len);
-        //printf("presp.password       : %s\n", dbg_hexprint(resp41.password.data, resp41.password.len));
-        printf("resp41.schema         : %s\n", resp41.schema.data);
-        printf("resp41.auth_plug_name : %s\n", resp41.auth_plug_name.data);
-        //printf("resp41.attr.data      : %s\n", resp41.attr.data);
+        if (proxy_cfg.verbose) {
+            printf("resp41.capab_fs       : %X\n", resp41.capab_fs);
+            printf("resp41.max_packet_size: %u\n", resp41.max_packet_size);
+            printf("resp41.charset        : %u\n", resp41.charset);
+            printf("resp41.username       : %s\n", resp41.username.data);
+            printf("resp41.password.len   : %u\n", resp41.password.len);
+            printf("presp.password        : %s\n", __dbg_hexprint(resp41.password.data, resp41.password.len));
+            printf("resp41.schema         : %s\n", resp41.schema.data);
+            printf("resp41.auth_plug_name : %s\n", resp41.auth_plug_name.data);
+            printf("resp41.attr.data      : %s\n", __dbg_hexprint(resp41.attr.data, resp41.attr.len));
+        }
 
         static proto_resp_ok_t rok;
         rok.status_fl = 0x0002;
@@ -148,10 +166,27 @@ cb_read(struct bufferevent *bev, void *ctx)
 
     /* Query phase */
     if (session->phase == PROXY_SESSPHASE_QUERY) {
-        static proto_req_query_t rquery;
-        proto_pack_read(input, PROTO_REQ_QUERY, &rquery, sizeof(rquery));
-        if (rquery.query.len > 0) {
-            execute_query(output, rquery.query.data, session);
+        uint8_t rtype, psec;
+        size_t  psize;
+        proto_pack_look(input, &rtype, &psec, &psize);
+        if (rtype == 3) {
+            /* query */
+            static proto_req_query_t rquery;
+            proto_pack_read(input, PROTO_REQ_QUERY, &rquery, sizeof(rquery));
+            if (rquery.query.len > 0) {
+                execute_query(output, rquery.query.data, session);
+            }
+        } else if (rtype == 1) {
+            /* quit */
+            bufferevent_free(bev);
+        } else {
+            if (proxy_cfg.verbose) {
+                printf("Ignore unexpected packet: request type: %u, sequence: %u, payload size: %lu\n", rtype, psec, psize);
+            }
+            evbuffer_drain(input, psize + 4);
+            static proto_resp_eof_t reof;
+            reof.status_fl = 0x0002;
+            proto_pack_write(output, PROTO_RESP_EOF, &reof, sizeof(reof));
         }
     }
 }
@@ -213,7 +248,7 @@ cb_accept_conn(struct evconnlistener *listener,
 
     bufferevent_enable(bev, EV_READ|EV_WRITE);
 
-    proto_conn_greet10_t pgreet;
+    static proto_conn_greet10_t pgreet;
     memset(&pgreet, 0, sizeof(pgreet));
     pgreet.pversion = 10;
     pgreet.sversion.data = "5.5.5-10.0.14-MariaDB-log";
