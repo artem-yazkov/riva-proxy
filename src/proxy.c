@@ -37,9 +37,10 @@ typedef struct proxy_cfg {
 #define PROXY_SESSPHASE_CONN    0
 #define PROXY_SESSPHASE_QUERY   1
 typedef struct proxy_session {
-    MYSQL **dbc;
-    int     db_cnt;
-    int     phase;
+    MYSQL     **dbc;
+    MYSQL_RES **mres;
+    int         db_cnt;
+    int         phase;
 } proxy_session_t;
 
 static proxy_cfg_t proxy_cfg;
@@ -60,31 +61,54 @@ char* __dbg_hexprint(char *data, size_t size)
     return output;
 }
 
-static void
+static int
 execute_query(struct evbuffer *output, char *query, proxy_session_t *session)
 {
+    static proto_resp_fcount_t rfcount;
+    rfcount.fcount = 0;
+
+    if (proxy_cfg.verbose) {
+        fprintf(stdout, "Exec: %s\n", query);
+    }
+
     for (int idb = 0; idb < session->db_cnt; idb++) {
-        if (mysql_query(session->dbc[idb], query) != 0) {
-            fprintf(stderr, "can't execute query: '%s': %s\n",
-                    query, mysql_error(session->dbc[idb]));
+        int qresult = mysql_query(session->dbc[idb], query);
+        if (qresult == 0) {
+            session->mres[idb] = mysql_store_result(session->dbc[idb]);
+        }
+        if (mysql_errno(session->dbc[idb]) > 0) {
+            fprintf(stderr, "error at %d backend: %s\n",
+                    idb, mysql_error(session->dbc[idb]));
 
             static proto_resp_err_t rerr;
             rerr.message.data = (char *)mysql_error(session->dbc[idb]);
             rerr.message.len = strlen(rerr.message.data);
             proto_pack_write(output, PROTO_RESP_ERR, &rerr, sizeof(rerr));
-            return;
+            return -1;
         }
+        if ((rfcount.fcount != 0) && (mysql_field_count(session->dbc[idb]) != rfcount.fcount)) {
+            static proto_resp_err_t rerr;
+            fprintf(stderr, "inconsistent field numbers across backends");
+            rerr.message.data = "inconsistent field numbers across backends";
+            rerr.message.len = strlen(rerr.message.data);
+            proto_pack_write(output, PROTO_RESP_ERR, &rerr, sizeof(rerr));
+            return -1;
+        }
+        rfcount.fcount = mysql_field_count(session->dbc[idb]);
+    }
+    if (rfcount.fcount == 0) {
+        static proto_resp_ok_t rok;
+        rok.status_fl = 0x0002;
+        proto_pack_write(output, PROTO_RESP_OK, &rok, sizeof(rok));
+        return 0;
     }
 
-    MYSQL_RES *mres = mysql_store_result(session->dbc[0]);
 
-    static proto_resp_fcount_t rfcount;
-    rfcount.fcount = mysql_num_fields(mres);
     proto_pack_write(output, PROTO_RESP_FCOUNT, &rfcount, sizeof(rfcount));
 
     MYSQL_FIELD *mfield;
     static proto_resp_field_t  rfield;
-    while ((mfield = mysql_fetch_field(mres))) {
+    while ((mfield = mysql_fetch_field(session->mres[0]))) {
         rfield.catalog.data = mfield->catalog;
         rfield.catalog.len  = strlen(rfield.catalog.data);
         rfield.name.data    = mfield->name;
@@ -110,11 +134,12 @@ execute_query(struct evbuffer *output, char *query, proxy_session_t *session)
 
     int rcount = 0;
     for (int idb = 0; idb < session->db_cnt; idb++) {
-        if (idb > 0) {
-            mres = mysql_store_result(session->dbc[idb]);
+        if (session->mres[idb] == NULL) {
+            printf("continue\n");
+            continue;
         }
         MYSQL_ROW  mrow;
-        while ((mrow = mysql_fetch_row(mres))) {
+        while ((mrow = mysql_fetch_row(session->mres[idb]))) {
             int irow;
             for(irow = 0; irow < rfcount.fcount; irow++) {
                 rrow.values[irow].data = mrow[irow];
@@ -123,13 +148,15 @@ execute_query(struct evbuffer *output, char *query, proxy_session_t *session)
             proto_pack_write(output, PROTO_RESP_ROW, &rrow, sizeof(rrow));
             rcount++;
         }
+        mysql_free_result(session->mres[idb]);
     }
 
     proto_pack_write(output, PROTO_RESP_EOF, &reof, sizeof(reof));
 
     if (proxy_cfg.verbose) {
-        fprintf(stdout, "Q: %s; F: %lu, R: %d\n", query, rfcount.fcount, rcount);
+        fprintf(stdout, "Fields: %lu, Rows: %d\n", rfcount.fcount, rcount);
     }
+    return rcount;
 }
 
 static void
@@ -174,7 +201,10 @@ cb_read(struct bufferevent *bev, void *ctx)
             static proto_req_query_t rquery;
             proto_pack_read(input, PROTO_REQ_QUERY, &rquery, sizeof(rquery));
             if (rquery.query.len > 0) {
-                execute_query(output, rquery.query.data, session);
+                int qresult = execute_query(output, rquery.query.data, session);
+                if (qresult < 0) {
+                    bufferevent_free(bev);
+                }
             }
         } else if (rtype == 1) {
             /* quit */
@@ -218,6 +248,8 @@ cb_accept_conn(struct evconnlistener *listener,
     proxy_session_t *session = calloc(1, sizeof(proxy_session_t));
     session->db_cnt = proxy_cfg.db_cnt;
     session->dbc = calloc(session->db_cnt, sizeof(session->dbc[0]));
+    session->mres = calloc(session->db_cnt, sizeof(session->mres[0]));
+
     for (int idb = 0; idb < session->db_cnt; idb++) {
         session->dbc[idb] = mysql_init(NULL);
         MYSQL *rconn = mysql_real_connect(session->dbc[idb],
