@@ -195,20 +195,20 @@ cb_read(struct bufferevent *bev, void *ctx)
     if (session->phase == PROXY_SESSPHASE_QUERY) {
         uint8_t rtype, psec;
         size_t  psize;
-        proto_pack_look(input, &rtype, &psec, &psize);
+
+        if (proto_pack_look(input, &rtype, &psec, &psize) < 0) {
+            return;
+        }
         if (rtype == 3) {
             /* query */
             static proto_req_query_t rquery;
             proto_pack_read(input, PROTO_REQ_QUERY, &rquery, sizeof(rquery));
             if (rquery.query.len > 0) {
-                int qresult = execute_query(output, rquery.query.data, session);
-                if (qresult < 0) {
-                    bufferevent_free(bev);
-                }
+                execute_query(output, rquery.query.data, session);
             }
         } else if (rtype == 1) {
             /* quit */
-            bufferevent_free(bev);
+            /* do nothing */
         } else {
             if (proxy_cfg.verbose) {
                 printf("Ignore unexpected packet: request type: %u, sequence: %u, payload size: %lu\n", rtype, psec, psize);

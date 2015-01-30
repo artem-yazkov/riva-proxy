@@ -355,7 +355,7 @@ int proto_pack_look(struct evbuffer *evbuf, uint8_t *rtype, uint8_t *psec, size_
     *psec = sequence_id = phdr[3];
     *rtype = phdr[4];
 
-    if (evbuffer_get_length(evbuf) < *psize + 5) {
+    if (evbuffer_get_length(evbuf) < (*psize + 4)) {
         return -1;
     }
 
