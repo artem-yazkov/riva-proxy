@@ -269,6 +269,7 @@ cb_accept_conn(struct evconnlistener *listener,
             fprintf(stderr, "Close connection\n");
             event_base_loopexit(evconnlistener_get_base(listener), NULL);
         }
+        session->dbc[idb]->reconnect = 1;
     }
 
     /* We got a new connection! Set up a bufferevent for it. */
