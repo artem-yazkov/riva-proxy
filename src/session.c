@@ -25,7 +25,7 @@ execute_query(struct evbuffer *output, char *query, session_t *session)
             session->mres[idb] = mysql_store_result(session->dbc[idb]);
         }
         if (mysql_errno(session->dbc[idb]) > 0) {
-            aux_log(AUX_LT_WARN, "error at %d backend: %s\n",
+            aux_log(AUX_LT_WARN, "error at %d backend: %s",
                     idb, mysql_error(session->dbc[idb]));
 
             static proto_resp_err_t rerr;
@@ -99,7 +99,7 @@ execute_query(struct evbuffer *output, char *query, session_t *session)
     }
 
     proto_pack_write(output, PROTO_RESP_EOF, &reof, sizeof(reof));
-    aux_log(AUX_LT_STAT, "Fields: %lu, Rows: %d\n", rfcount.fcount, rcount);
+    aux_log(AUX_LT_STAT, "Fields: %lu, Rows: %d", rfcount.fcount, rcount);
 
     return rcount;
 }
@@ -118,15 +118,15 @@ cb_read(struct bufferevent *bev, void *ctx)
         static proto_conn_resp41_t resp41;
         proto_pack_read(input, PROTO_CONN_RESP41, &resp41, sizeof(resp41));
 
-        aux_log(AUX_LT_INFO, "resp41.capab_fs       : %X\n", resp41.capab_fs);
-        aux_log(AUX_LT_INFO, "resp41.max_packet_size: %u\n", resp41.max_packet_size);
-        aux_log(AUX_LT_INFO, "resp41.charset        : %u\n", resp41.charset);
-        aux_log(AUX_LT_INFO, "resp41.username       : %s\n", resp41.username.data);
-        aux_log(AUX_LT_INFO, "resp41.password.len   : %u\n", resp41.password.len);
-        aux_log(AUX_LT_INFO, "presp.password        : %s\n", aux_dbg_hexprint(resp41.password.data, resp41.password.len));
-        aux_log(AUX_LT_INFO, "resp41.schema         : %s\n", resp41.schema.data);
-        aux_log(AUX_LT_INFO, "resp41.auth_plug_name : %s\n", resp41.auth_plug_name.data);
-        aux_log(AUX_LT_INFO, "resp41.attr.data      : %s\n", aux_dbg_hexprint(resp41.attr.data, resp41.attr.len));
+        aux_log(AUX_LT_INFO, "resp41.capab_fs       : %X", resp41.capab_fs);
+        aux_log(AUX_LT_INFO, "resp41.max_packet_size: %u", resp41.max_packet_size);
+        aux_log(AUX_LT_INFO, "resp41.charset        : %u", resp41.charset);
+        aux_log(AUX_LT_INFO, "resp41.username       : %s", resp41.username.data);
+        aux_log(AUX_LT_INFO, "resp41.password.len   : %u", resp41.password.len);
+        aux_log(AUX_LT_INFO, "presp.password        : %s", aux_dbg_hexprint(resp41.password.data, resp41.password.len));
+        aux_log(AUX_LT_INFO, "resp41.schema         : %s", resp41.schema.data);
+        aux_log(AUX_LT_INFO, "resp41.auth_plug_name : %s", resp41.auth_plug_name.data);
+        aux_log(AUX_LT_INFO, "resp41.attr.data      : %s", aux_dbg_hexprint(resp41.attr.data, resp41.attr.len));
 
         static proto_resp_ok_t rok;
         rok.status_fl = 0x0002;
@@ -154,7 +154,7 @@ cb_read(struct bufferevent *bev, void *ctx)
             /* quit */
             /* do nothing */
         } else {
-            aux_log(AUX_LT_WARN, "Ignore unexpected packet: request type: %u, sequence: %u, payload size: %lu\n", rtype, psec, psize);
+            aux_log(AUX_LT_WARN, "Ignore unexpected packet: request type: %u, sequence: %u, payload size: %lu", rtype, psec, psize);
             evbuffer_drain(input, psize + 4);
             static proto_resp_eof_t reof;
             reof.status_fl = 0x0002;
@@ -178,7 +178,7 @@ cb_event(struct bufferevent *bev, short events, void *ctx)
         free(session->dbc);
         free(session);
         bufferevent_free(bev);
-        aux_log(AUX_LT_INFO, "close connection\n");
+        aux_log(AUX_LT_INFO, "close connection");
     }
 }
 
@@ -203,7 +203,7 @@ session_accept_conn(struct evconnlistener *listener,
                 session->cfg->db[idb].port,
                 NULL, 0);
         if (rconn == NULL) {
-            aux_log(AUX_LT_ERROR, "Can't connect to %s\n", session->cfg->db[idb].url);
+            aux_log(AUX_LT_ERROR, "Can't connect to %s", session->cfg->db[idb].url);
             event_base_loopexit(evconnlistener_get_base(listener), NULL);
         }
         session->dbc[idb]->reconnect = 1;

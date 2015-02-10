@@ -26,7 +26,7 @@ char* aux_dbg_hexprint(char *data, size_t size)
 
 void aux_log(int lt, char *format, ...)
 {
-    if (!(aux_lt_mask && lt)) {
+    if (!(aux_lt_mask & lt)) {
         return;
     }
 
@@ -57,4 +57,6 @@ void aux_log(int lt, char *format, ...)
     va_start(args, format);
     vprintf(format, args);
     va_end(args);
+
+    printf("\n");
 }
