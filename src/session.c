@@ -17,9 +17,7 @@ execute_query(struct evbuffer *output, char *query, session_t *session)
     static proto_resp_fcount_t rfcount;
     rfcount.fcount = 0;
 
-    if (session->cfg->verbose) {
-        fprintf(stdout, "Exec: %s\n", query);
-    }
+    aux_log(AUX_LT_QUERY, "%s", query);
 
     for (int idb = 0; idb < session->db_cnt; idb++) {
         int qresult = mysql_query(session->dbc[idb], query);
@@ -27,7 +25,7 @@ execute_query(struct evbuffer *output, char *query, session_t *session)
             session->mres[idb] = mysql_store_result(session->dbc[idb]);
         }
         if (mysql_errno(session->dbc[idb]) > 0) {
-            fprintf(stderr, "error at %d backend: %s\n",
+            aux_log(AUX_LT_WARN, "error at %d backend: %s\n",
                     idb, mysql_error(session->dbc[idb]));
 
             static proto_resp_err_t rerr;
@@ -38,9 +36,9 @@ execute_query(struct evbuffer *output, char *query, session_t *session)
         }
         if ((rfcount.fcount != 0) && (mysql_field_count(session->dbc[idb]) != rfcount.fcount)) {
             static proto_resp_err_t rerr;
-            fprintf(stderr, "inconsistent field numbers across backends");
             rerr.message.data = "inconsistent field numbers across backends";
             rerr.message.len = strlen(rerr.message.data);
+            aux_log(AUX_LT_WARN, "%s", rerr.message.data);
             proto_pack_write(output, PROTO_RESP_ERR, &rerr, sizeof(rerr));
             return -1;
         }
@@ -85,7 +83,6 @@ execute_query(struct evbuffer *output, char *query, session_t *session)
     int rcount = 0;
     for (int idb = 0; idb < session->db_cnt; idb++) {
         if (session->mres[idb] == NULL) {
-            printf("continue\n");
             continue;
         }
         MYSQL_ROW  mrow;
@@ -102,10 +99,8 @@ execute_query(struct evbuffer *output, char *query, session_t *session)
     }
 
     proto_pack_write(output, PROTO_RESP_EOF, &reof, sizeof(reof));
+    aux_log(AUX_LT_STAT, "Fields: %lu, Rows: %d\n", rfcount.fcount, rcount);
 
-    if (session->cfg->verbose) {
-        fprintf(stdout, "Fields: %lu, Rows: %d\n", rfcount.fcount, rcount);
-    }
     return rcount;
 }
 
@@ -122,17 +117,16 @@ cb_read(struct bufferevent *bev, void *ctx)
     if (session->phase == SESSION_PHASE_CONN) {
         static proto_conn_resp41_t resp41;
         proto_pack_read(input, PROTO_CONN_RESP41, &resp41, sizeof(resp41));
-        if (session->cfg->verbose) {
-            printf("resp41.capab_fs       : %X\n", resp41.capab_fs);
-            printf("resp41.max_packet_size: %u\n", resp41.max_packet_size);
-            printf("resp41.charset        : %u\n", resp41.charset);
-            printf("resp41.username       : %s\n", resp41.username.data);
-            printf("resp41.password.len   : %u\n", resp41.password.len);
-            printf("presp.password        : %s\n", aux_dbg_hexprint(resp41.password.data, resp41.password.len));
-            printf("resp41.schema         : %s\n", resp41.schema.data);
-            printf("resp41.auth_plug_name : %s\n", resp41.auth_plug_name.data);
-            printf("resp41.attr.data      : %s\n", aux_dbg_hexprint(resp41.attr.data, resp41.attr.len));
-        }
+
+        aux_log(AUX_LT_INFO, "resp41.capab_fs       : %X\n", resp41.capab_fs);
+        aux_log(AUX_LT_INFO, "resp41.max_packet_size: %u\n", resp41.max_packet_size);
+        aux_log(AUX_LT_INFO, "resp41.charset        : %u\n", resp41.charset);
+        aux_log(AUX_LT_INFO, "resp41.username       : %s\n", resp41.username.data);
+        aux_log(AUX_LT_INFO, "resp41.password.len   : %u\n", resp41.password.len);
+        aux_log(AUX_LT_INFO, "presp.password        : %s\n", aux_dbg_hexprint(resp41.password.data, resp41.password.len));
+        aux_log(AUX_LT_INFO, "resp41.schema         : %s\n", resp41.schema.data);
+        aux_log(AUX_LT_INFO, "resp41.auth_plug_name : %s\n", resp41.auth_plug_name.data);
+        aux_log(AUX_LT_INFO, "resp41.attr.data      : %s\n", aux_dbg_hexprint(resp41.attr.data, resp41.attr.len));
 
         static proto_resp_ok_t rok;
         rok.status_fl = 0x0002;
@@ -160,9 +154,7 @@ cb_read(struct bufferevent *bev, void *ctx)
             /* quit */
             /* do nothing */
         } else {
-            if (session->cfg->verbose) {
-                printf("Ignore unexpected packet: request type: %u, sequence: %u, payload size: %lu\n", rtype, psec, psize);
-            }
+            aux_log(AUX_LT_WARN, "Ignore unexpected packet: request type: %u, sequence: %u, payload size: %lu\n", rtype, psec, psize);
             evbuffer_drain(input, psize + 4);
             static proto_resp_eof_t reof;
             reof.status_fl = 0x0002;
@@ -175,7 +167,7 @@ static void
 cb_event(struct bufferevent *bev, short events, void *ctx)
 {
     if (events & BEV_EVENT_ERROR) {
-        perror("Error from bufferevent");
+        aux_log(AUX_LT_ERROR, "Error from bufferevent");
     }
 
     if (events & (BEV_EVENT_EOF | BEV_EVENT_ERROR)) {
@@ -186,7 +178,7 @@ cb_event(struct bufferevent *bev, short events, void *ctx)
         free(session->dbc);
         free(session);
         bufferevent_free(bev);
-        printf("close connection\n");
+        aux_log(AUX_LT_INFO, "close connection\n");
     }
 }
 
@@ -211,13 +203,7 @@ session_accept_conn(struct evconnlistener *listener,
                 session->cfg->db[idb].port,
                 NULL, 0);
         if (rconn == NULL) {
-            fprintf(stderr, "Can't connect to %s:%s@%s:%d/%s\n",
-                    session->cfg->db[idb].username,
-                    session->cfg->db[idb].password,
-                    session->cfg->db[idb].host,
-                    session->cfg->db[idb].port,
-                    session->cfg->db[idb].database);
-            fprintf(stderr, "Close connection\n");
+            aux_log(AUX_LT_ERROR, "Can't connect to %s\n", session->cfg->db[idb].url);
             event_base_loopexit(evconnlistener_get_base(listener), NULL);
         }
         session->dbc[idb]->reconnect = 1;
@@ -235,12 +221,12 @@ session_accept_conn(struct evconnlistener *listener,
     static proto_conn_greet10_t pgreet;
     memset(&pgreet, 0, sizeof(pgreet));
     pgreet.pversion = 10;
-    pgreet.sversion.data = "5.5.5-10.0.14-MariaDB-log";
+    pgreet.sversion.data = "riva-proxy";
     pgreet.sversion.len = strlen(pgreet.sversion.data);
     pgreet.connid = 28;
 
-    char salt[20] =  {0x36, 0x53, 0x7e, 0x43, 0x71, 0x33, 0x46, 0x45, 0x69, 0x62,
-                      0x2f, 0x5f, 0x74, 0x4c, 0x5a, 0x63, 0x60, 0x39, 0x3c, 0x61};
+    char salt[] =  {0x36, 0x53, 0x7e, 0x43, 0x71, 0x33, 0x46, 0x45, 0x69, 0x62,
+                    0x2f, 0x5f, 0x74, 0x4c, 0x5a, 0x63, 0x60, 0x39, 0x3c, 0x61};
     pgreet.salt.data = salt;
     pgreet.salt.len = sizeof(salt);
     pgreet.capab_fs = 0xa03ff7ff;
@@ -256,7 +242,7 @@ session_accept_error(struct evconnlistener *listener, void *ctx)
 {
     struct event_base *base = evconnlistener_get_base(listener);
     int err = EVUTIL_SOCKET_ERROR();
-    fprintf(stderr, "Got an error %d (%s) on the listener. "
+    aux_log(AUX_LT_ERROR, "Got an error %d (%s) on the listener. "
             "Shutting down.\n", err, evutil_socket_error_to_string(err));
 
     event_base_loopexit(base, NULL);

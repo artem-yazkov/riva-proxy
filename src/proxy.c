@@ -27,12 +27,13 @@ process_args(int argc, char * const argv[])
 {
     strncpy(proxy_cfg.lhost, PROXY_CFG_LISTEN_HOST, sizeof(proxy_cfg.lhost) - 1);
     proxy_cfg.lport = PROXY_CFG_LISTEN_PORT;
+    aux_lt_mask = proxy_cfg.logtypes = AUX_LT_DEFAULT;
 
     static struct option options[] = {
         /* name, has_arg, flag, value */
         { .name = "help"         , no_argument       , NULL , 'h' },
         { .name = "version"      , no_argument       , NULL , 'v' },
-        { .name = "verbose"      , no_argument       , NULL , 'V' },
+        { .name = "logtypes"     , no_argument       , NULL , 'l' },
         { .name = "proxy-address", required_argument , NULL , 'a' },
         { .name = "backend"      , required_argument , NULL , 'b' },
         { NULL                   , 0                 , NULL ,  0  }
@@ -60,6 +61,7 @@ process_args(int argc, char * const argv[])
             help("Incorrect proxy-address");
             exit(1);
         }
+
         if (opt == 'b') {
             proxy_cfg.db_cnt++;
             proxy_cfg.db = realloc(proxy_cfg.db, sizeof(proxy_cfg_db_t) * proxy_cfg.db_cnt);
@@ -96,13 +98,38 @@ process_args(int argc, char * const argv[])
             help("Incorrect backend");
             exit(1);
         }
+
         if (opt == 'h') {
             help(NULL);
         }
-        if (opt == 'V') {
-            proxy_cfg.verbose = 1;
+
+        if (opt == 'l') {
+            proxy_cfg.logtypes = AUX_LT_NONE;
+            char *tok = strtok(optarg, ",");
+            while (tok != NULL) {
+                if (strcasecmp(tok, "error")) {
+                    proxy_cfg.logtypes |= AUX_LT_ERROR;
+                } else if (strcasecmp(tok, "warn")) {
+                    proxy_cfg.logtypes |= AUX_LT_WARN;
+                } else if (strcasecmp(tok, "info")) {
+                    proxy_cfg.logtypes |= AUX_LT_INFO;
+                } else if (strcasecmp(tok, "query")) {
+                    proxy_cfg.logtypes |= AUX_LT_QUERY;
+                } else if (strcasecmp(tok, "stat")) {
+                    proxy_cfg.logtypes |= AUX_LT_STAT;
+                } else if (strcasecmp(tok, "none")) {
+                    proxy_cfg.logtypes |= AUX_LT_NONE;
+                } else if (strcasecmp(tok, "all")) {
+                    proxy_cfg.logtypes |= AUX_LT_ALL;
+                } else {
+                    proxy_cfg.logtypes |= AUX_LT_DEFAULT;
+                }
+                tok = strtok(NULL, ",");
+            }
+            aux_lt_mask = proxy_cfg.logtypes;
         }
     }
+
     if (proxy_cfg.db_cnt == 0) {
         help("At least one backend must be specified");
         exit(1);
