@@ -33,7 +33,7 @@ process_args(int argc, char * const argv[])
         /* name, has_arg, flag, value */
         { .name = "help"         , no_argument       , NULL , 'h' },
         { .name = "version"      , no_argument       , NULL , 'v' },
-        { .name = "logtypes"     , no_argument       , NULL , 'l' },
+        { .name = "logtypes"     , required_argument , NULL , 'l' },
         { .name = "proxy-address", required_argument , NULL , 'a' },
         { .name = "backend"      , required_argument , NULL , 'b' },
         { NULL                   , 0                 , NULL ,  0  }
@@ -107,22 +107,22 @@ process_args(int argc, char * const argv[])
             proxy_cfg.logtypes = AUX_LT_NONE;
             char *tok = strtok(optarg, ",");
             while (tok != NULL) {
-                if (strcasecmp(tok, "error")) {
+                if (!strcasecmp(tok, "error")) {
                     proxy_cfg.logtypes |= AUX_LT_ERROR;
-                } else if (strcasecmp(tok, "warn")) {
+                } else if (!strcasecmp(tok, "warn")) {
                     proxy_cfg.logtypes |= AUX_LT_WARN;
-                } else if (strcasecmp(tok, "info")) {
+                } else if (!strcasecmp(tok, "info")) {
                     proxy_cfg.logtypes |= AUX_LT_INFO;
-                } else if (strcasecmp(tok, "query")) {
+                } else if (!strcasecmp(tok, "query")) {
                     proxy_cfg.logtypes |= AUX_LT_QUERY;
-                } else if (strcasecmp(tok, "stat")) {
+                } else if (!strcasecmp(tok, "stat")) {
                     proxy_cfg.logtypes |= AUX_LT_STAT;
-                } else if (strcasecmp(tok, "none")) {
+                } else if (!strcasecmp(tok, "none")) {
                     proxy_cfg.logtypes |= AUX_LT_NONE;
-                } else if (strcasecmp(tok, "all")) {
+                } else if (!strcasecmp(tok, "all")) {
                     proxy_cfg.logtypes |= AUX_LT_ALL;
                 } else {
-                    proxy_cfg.logtypes |= AUX_LT_DEFAULT;
+                    help("Incorrect logtypes");
                 }
                 tok = strtok(NULL, ",");
             }
