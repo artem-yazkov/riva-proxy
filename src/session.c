@@ -4,6 +4,7 @@
 #include <event2/bufferevent.h>
 #include <event2/buffer.h>
 
+#include <ctype.h>
 #include <string.h>
 #include <stdlib.h>
 
@@ -12,7 +13,75 @@
 #include "protocol.h"
 
 static int
-execute_query(struct evbuffer *output, char *query, session_t *session)
+query_parse(char *query)
+{
+    static char  *lquery;
+    static size_t lquery_sz;
+
+    if (lquery_sz < (strlen(query) + 1)) {
+        lquery_sz = strlen(query) + 1;
+        lquery = realloc(lquery, lquery_sz);
+    }
+
+    int q, lq;
+    for (q = 0, lq = 0; query[q] != '\0'; q++) {
+        if (!(isspace(query[q]) && isspace(query[q+1]))) {
+            lquery[lq++] = tolower(query[q]);
+        }
+    }
+    lquery[lq] = '\0';
+
+    char needle[] = "order by";
+    char *straw = lquery;
+    char *lstraw = NULL;
+    while ((straw = strstr(straw, needle)) != NULL) {
+        lstraw = straw++;
+    }
+    if (lstraw == NULL) {
+        return -1;
+    }
+
+    char *fields = lstraw + strlen(needle);
+    char *field = strtok(fields, ",");
+    char *field_post = NULL;
+    while (field != NULL) {
+        printf("field: %s --> ", field);
+        if (isspace(field[0])) {
+            field++;
+        }
+        char quote = '\0';
+        if ((field[0] == '`') || (field[0] == '\'') || (field[0] == '"')) {
+            quote = field[0];
+            field++;
+        }
+        for (int ic = 0; field[ic]; ic++) {
+            if ((quote && (field[ic] == quote)) || (!quote && isspace(field[ic]))) {
+                field[ic] = '\0';
+                field_post = &field[ic + 1];
+                break;
+            }
+        }
+        if (field[0] == '\0') {
+            return -1;
+        }
+
+        if (isspace(field_post[0])) {
+            field_post++;
+        }
+
+        int descend = 0;
+        if (strncmp(field_post, "desc", 4) == 0) {
+            descend = 1;
+        }
+        printf("%s; %s\n", field, (descend ? "DESC" : "ASC"));
+
+        field = strtok(NULL, ",");
+    }
+    return 0;
+}
+
+static int
+query_execute(struct evbuffer *output, char *query, session_t *session)
 {
     static proto_resp_fcount_t rfcount;
     rfcount.fcount = 0;
@@ -148,7 +217,7 @@ cb_read(struct bufferevent *bev, void *ctx)
             static proto_req_query_t rquery;
             proto_pack_read(input, PROTO_REQ_QUERY, &rquery, sizeof(rquery));
             if (rquery.query.len > 0) {
-                execute_query(output, rquery.query.data, session);
+                query_execute(output, rquery.query.data, session);
             }
         } else if (rtype == 1) {
             /* quit */
