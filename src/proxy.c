@@ -34,6 +34,7 @@ process_args(int argc, char * const argv[])
         { .name = "help"         , no_argument       , NULL , 'h' },
         { .name = "version"      , no_argument       , NULL , 'v' },
         { .name = "logtypes"     , required_argument , NULL , 'l' },
+        { .name = "limit"        , required_argument , NULL , 'L' },
         { .name = "proxy-address", required_argument , NULL , 'a' },
         { .name = "backend"      , required_argument , NULL , 'b' },
         { NULL                   , 0                 , NULL ,  0  }
@@ -127,6 +128,10 @@ process_args(int argc, char * const argv[])
                 tok = strtok(NULL, ",");
             }
             aux_lt_mask = proxy_cfg.logtypes;
+        }
+
+        if (opt == 'L') {
+            proxy_cfg.limit = atoi(optarg);
         }
     }
 

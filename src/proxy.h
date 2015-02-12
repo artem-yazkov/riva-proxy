@@ -20,6 +20,7 @@ typedef struct proxy_cfg {
     proxy_cfg_db_t *db;
     int             db_cnt;
     int             logtypes;
+    int             limit;
 } proxy_cfg_t;
 
 #endif /* PROXY_H_ */

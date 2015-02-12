@@ -12,9 +12,70 @@
 #include "session.h"
 #include "protocol.h"
 
-static int
-query_parse(char *query)
+#define ORDERSET_INC   (8)
+typedef struct orderset {
+    int       *fnums;
+    int       *otypes;
+    size_t     count;
+    size_t     sz;
+} orderset_t;
+static orderset_t orderset;
+
+#define ROWSET_INC     (64)
+typedef struct rowset {
+    MYSQL_ROW *rows;
+    size_t     count;
+    size_t     sz;
+} rowset_t;
+static rowset_t rowset;
+
+static void
+orderset_add(orderset_t *oset, int fnum, int otype)
 {
+    if (oset->count == oset->sz) {
+        oset->sz += ORDERSET_INC;
+        oset->fnums = realloc(oset->fnums, oset->sz);
+        oset->otypes = realloc(oset->otypes, oset->sz);
+    }
+    oset->fnums[oset->count] = fnum;
+    oset->otypes[oset->count] = otype;
+    oset->count++;
+}
+
+static void
+rowset_add(rowset_t *rset, MYSQL_ROW row)
+{
+    if (rset->count == rset->sz) {
+        rset->sz += ROWSET_INC;
+        rset->rows = realloc(rset->rows, rset->sz);
+    }
+    rset->rows[rset->count] = row;
+    rset->count++;
+}
+
+static int
+rowset_compare(const void *a, const void *b)
+{
+    MYSQL_ROW arow = (void *) a;
+    MYSQL_ROW brow = (void *) b;
+    for (int iord = 0; iord < orderset.count; iord++) {
+        int cres = strcmp(arow[orderset.fnums[iord]], brow[orderset.fnums[iord]]);
+        if (cres != 0) {
+            if (orderset.otypes[iord] == 0) {
+                return cres;
+            } else {
+                return -cres;
+            }
+        }
+    }
+    return 0;
+}
+
+static int
+query_parse(char *query, session_t *session)
+{
+    orderset.count = 0;
+
     static char  *lquery;
     static size_t lquery_sz;
 
@@ -45,7 +106,6 @@ query_parse(char *query)
     char *field = strtok(fields, ",");
     char *field_post = NULL;
     while (field != NULL) {
-        printf("field: %s --> ", field);
         if (isspace(field[0])) {
             field++;
         }
@@ -69,15 +129,45 @@ query_parse(char *query)
             field_post++;
         }
 
-        int descend = 0;
-        if (strncmp(field_post, "desc", 4) == 0) {
-            descend = 1;
+        MYSQL_FIELD *mfield;
+        int          ifield = 0;
+        int          fieldnum = -1;
+        mysql_field_seek(session->mres[0], 0);
+        while ((mfield = mysql_fetch_field(session->mres[0]))) {
+            if (strcmp(mfield->name, field) == 0) {
+                fieldnum = ifield;
+                break;
+            }
+            ifield++;
         }
-        printf("%s; %s\n", field, (descend ? "DESC" : "ASC"));
+        if (fieldnum < 0) {
+            return -1;
+        }
+
+        int ordertype = 0;
+        if (strncmp(field_post, "desc", 4) == 0) {
+            ordertype = 1;
+        }
+        orderset_add(&orderset, fieldnum, ordertype);
 
         field = strtok(NULL, ",");
     }
     return 0;
+}
+
+static void
+__query_execute_err(char *errstr, int erridb, struct evbuffer *output, session_t *session)
+{
+    aux_log(AUX_LT_WARN, "error at backend %s: %s", session->cfg->db[erridb].url, errstr);
+
+    static proto_resp_err_t rerr;
+    rerr.message.data = errstr;
+    rerr.message.len = strlen(rerr.message.data);
+    proto_pack_write(output, PROTO_RESP_ERR, &rerr, sizeof(rerr));
+
+    for (int idb = 0; idb <= erridb; idb++) {
+        mysql_free_result(session->mres[idb]);
+    }
 }
 
 static int
@@ -94,21 +184,11 @@ query_execute(struct evbuffer *output, char *query, session_t *session)
             session->mres[idb] = mysql_store_result(session->dbc[idb]);
         }
         if (mysql_errno(session->dbc[idb]) > 0) {
-            aux_log(AUX_LT_WARN, "error at %d backend: %s",
-                    idb, mysql_error(session->dbc[idb]));
-
-            static proto_resp_err_t rerr;
-            rerr.message.data = (char *)mysql_error(session->dbc[idb]);
-            rerr.message.len = strlen(rerr.message.data);
-            proto_pack_write(output, PROTO_RESP_ERR, &rerr, sizeof(rerr));
+            __query_execute_err((char *)mysql_error(session->dbc[idb]), idb, output, session);
             return -1;
         }
         if ((rfcount.fcount != 0) && (mysql_field_count(session->dbc[idb]) != rfcount.fcount)) {
-            static proto_resp_err_t rerr;
-            rerr.message.data = "inconsistent field numbers across backends";
-            rerr.message.len = strlen(rerr.message.data);
-            aux_log(AUX_LT_WARN, "%s", rerr.message.data);
-            proto_pack_write(output, PROTO_RESP_ERR, &rerr, sizeof(rerr));
+            __query_execute_err("inconsistent field numbers across backends", idb, output, session);
             return -1;
         }
         rfcount.fcount = mysql_field_count(session->dbc[idb]);
@@ -121,6 +201,28 @@ query_execute(struct evbuffer *output, char *query, session_t *session)
     }
 
 
+    rowset.count = 0;
+    for (int idb = 0; idb < session->db_cnt; idb++) {
+        if (session->mres[idb] == NULL) {
+            continue;
+        }
+        MYSQL_ROW  mrow;
+        while ((mrow = mysql_fetch_row(session->mres[idb]))) {
+            if ((session->cfg->limit) && (rowset.count > session->cfg->limit)) {
+                break;
+            }
+            rowset_add(&rowset, mrow);
+        }
+    }
+
+    query_parse(query, session);
+    if (orderset.count > 0) {
+        qsort(rowset.rows, rowset.count, sizeof(rowset.rows[0]), rowset_compare);
+    }
+
+    /*
+     *
+     * */
     proto_pack_write(output, PROTO_RESP_FCOUNT, &rfcount, sizeof(rfcount));
 
     MYSQL_FIELD *mfield;
@@ -149,28 +251,27 @@ query_execute(struct evbuffer *output, char *query, session_t *session)
         memset(rrow.values, 0, rrow.values_sz * sizeof(proto_str_t));
     }
 
-    int rcount = 0;
+    int rowlimit = (session->cfg->limit > 0) ? session->cfg->limit : rowset.count;
+    for (int irow = 0; irow < rowlimit; irow++) {
+        MYSQL_ROW  mrow = rowset.rows[irow];
+        for(int icell = 0; icell < rfcount.fcount; icell++) {
+            rrow.values[irow].data = mrow[icell];
+            rrow.values[irow].len = (mrow[icell]) ? strlen(mrow[icell]) : 0;
+        }
+        proto_pack_write(output, PROTO_RESP_ROW, &rrow, sizeof(rrow));
+    }
+    proto_pack_write(output, PROTO_RESP_EOF, &reof, sizeof(reof));
+
     for (int idb = 0; idb < session->db_cnt; idb++) {
         if (session->mres[idb] == NULL) {
             continue;
         }
-        MYSQL_ROW  mrow;
-        while ((mrow = mysql_fetch_row(session->mres[idb]))) {
-            int irow;
-            for(irow = 0; irow < rfcount.fcount; irow++) {
-                rrow.values[irow].data = mrow[irow];
-                rrow.values[irow].len = (mrow[irow]) ? strlen(mrow[irow]) : 0;
-            }
-            proto_pack_write(output, PROTO_RESP_ROW, &rrow, sizeof(rrow));
-            rcount++;
-        }
         mysql_free_result(session->mres[idb]);
     }
 
-    proto_pack_write(output, PROTO_RESP_EOF, &reof, sizeof(reof));
-    aux_log(AUX_LT_STAT, "Fields: %lu, Rows: %d", rfcount.fcount, rcount);
+    aux_log(AUX_LT_STAT, "Fields: %lu, Rows: %d", rfcount.fcount, rowset.count);
 
-    return rcount;
+    return rowset.count;
 }
 
 static void
