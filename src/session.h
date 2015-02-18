@@ -8,9 +8,6 @@
 #define SESSION_PHASE_QUERY   1
 
 typedef struct session {
-    MYSQL       **dbc;
-    MYSQL_RES   **mres;
-    int           db_cnt;
     int           phase;
     proxy_cfg_t  *cfg;
 } session_t;

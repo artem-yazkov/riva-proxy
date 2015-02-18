@@ -8,6 +8,7 @@
 #include <event2/listener.h>
 
 #include "aux.h"
+#include "config.h"
 #include "protocol.h"
 #include "proxy.h"
 #include "session.h"
@@ -35,13 +36,14 @@ process_args(int argc, char * const argv[])
         { .name = "version"      , no_argument       , NULL , 'v' },
         { .name = "logtypes"     , required_argument , NULL , 'l' },
         { .name = "limit"        , required_argument , NULL , 'L' },
-        { .name = "proxy-address", required_argument , NULL , 'a' },
-        { .name = "backend"      , required_argument , NULL , 'b' },
+        { .name = "listen"       , required_argument , NULL , 'a' },
+        { .name = "config"       , required_argument , NULL , 'c' },
         { NULL                   , 0                 , NULL ,  0  }
     };
     int opt;
 
-    while ((opt = getopt_long(argc, argv, "hva:b:", options, NULL)) != -1) {
+    while ((opt = getopt_long_only(argc, argv, "hvl:L:a:c:", options, NULL)) != -1) {
+        /* Listen address */
         if (opt == 'a') {
             int args;
             /* all arguments */
@@ -62,12 +64,9 @@ process_args(int argc, char * const argv[])
             help("Incorrect proxy-address");
             exit(1);
         }
-
-        if (opt == 'b') {
-            proxy_cfg.db_cnt++;
-            proxy_cfg.db = realloc(proxy_cfg.db, sizeof(proxy_cfg_db_t) * proxy_cfg.db_cnt);
-
-            proxy_cfg_db_t *db = &proxy_cfg.db[proxy_cfg.db_cnt - 1];
+        /* Connection to the config DB */
+        if (opt == 'c') {
+            proxy_cfg_db_t *db = &proxy_cfg.dbcfg;
             memset(db, 0, sizeof(proxy_cfg_db_t));
             db->url = strdup(optarg);
 
@@ -99,11 +98,11 @@ process_args(int argc, char * const argv[])
             help("Incorrect backend");
             exit(1);
         }
-
+        /* Help */
         if (opt == 'h') {
             help(NULL);
         }
-
+        /* Logtypes */
         if (opt == 'l') {
             proxy_cfg.logtypes = AUX_LT_NONE;
             char *tok = strtok(optarg, ",");
@@ -129,14 +128,14 @@ process_args(int argc, char * const argv[])
             }
             aux_lt_mask = proxy_cfg.logtypes;
         }
-
+        /* Output limit */
         if (opt == 'L') {
             proxy_cfg.limit = atoi(optarg);
         }
     }
 
-    if (proxy_cfg.db_cnt == 0) {
-        help("At least one backend must be specified");
+    if (strlen(proxy_cfg.dbcfg.host) == 0) {
+        help("'--config' argument must be specified");
         exit(1);
     }
 }
@@ -145,6 +144,15 @@ int
 main(int argc, char **argv)
 {
     process_args(argc, argv);
+    int cresult = config_init(
+            proxy_cfg.dbcfg.host,
+            proxy_cfg.dbcfg.port,
+            proxy_cfg.dbcfg.username,
+            proxy_cfg.dbcfg.password,
+            proxy_cfg.dbcfg.database);
+    if (cresult < 0) {
+        return cresult;
+    }
 
     struct event_base *base;
     struct evconnlistener *listener;

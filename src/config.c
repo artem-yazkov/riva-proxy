@@ -41,7 +41,7 @@ struct config_tbl_hdl {
     __table_t *table;
     uint32_t   istorage;
 };
-
+const char *CONFIG_DB_NAME = "data";
 const char *QUERY_GET_TBL_STORAGE =
         "SELECT d.type, d.name, s.path AS addr, s.mode "
         "FROM map_data2storage AS d "
@@ -100,12 +100,13 @@ static int __add_tbl_storage(char *tbl, char *addr)
 int config_init(char *host, int port, char *user, char *pass, char *dbname)
 {
     /* Initialize __config structure */
+    __config = calloc(1, sizeof(__config_t));
+
     __config->host = strdup(host);
     __config->port = (port <= 0) ? 3306 : port;
     __config->user = strdup(user);
     __config->pass = strdup(pass);
     __config->dbname = strdup(dbname);
-
     static char url[PATH_MAX];
     snprintf(url, sizeof(url)-1, "%s:%s@%s:%d/%s",
             __config->user,
@@ -116,16 +117,17 @@ int config_init(char *host, int port, char *user, char *pass, char *dbname)
     __config->url = strdup(url);
 
     /* Retrieve info about table storages */
-    __config->dbcfg = mysql_real_connect(
-            mysql_init(NULL),
+    __config->dbcfg = mysql_init(NULL);
+    void *cres = mysql_real_connect(
+            __config->dbcfg,
             __config->host,
             __config->user,
             __config->pass,
             __config->dbname,
             __config->port,
             NULL, 0);
-    if (__config->dbcfg == NULL) {
-        aux_log(AUX_LT_ERROR, "Can't connect to %s", __config->url);
+    if (cres == NULL) {
+        aux_log(AUX_LT_ERROR, "Can't connect to <%s> : %s", __config->url, mysql_error(__config->dbcfg));
         return -1;
     }
     __config->dbcfg->reconnect = 1;
@@ -162,19 +164,20 @@ int config_init(char *host, int port, char *user, char *pass, char *dbname)
                 __config->pass,
                 istor->addr,
                 __config->port,
-                __config->dbname);
+                CONFIG_DB_NAME);
         istor->addr_url = strdup(url);
 
-        istor->dbdata = mysql_real_connect(
-                mysql_init(NULL),
+        istor->dbdata = mysql_init(NULL);
+        void *cres = mysql_real_connect(
+                istor->dbdata,
                 istor->addr,
                 __config->user,
                 __config->pass,
-                __config->dbname,
+                CONFIG_DB_NAME,
                 __config->port,
                 NULL, 0);
-        if (istor->dbdata == NULL) {
-            aux_log(AUX_LT_ERROR, "Can't connect to: %s", __config->url);
+        if (cres == NULL) {
+            aux_log(AUX_LT_ERROR, "Can't connect to: <%s>: %s", istor->addr_url, mysql_error(istor->dbdata));
             return -1;
         }
         istor->dbdata->reconnect = 1;
@@ -212,4 +215,9 @@ bool config_tbl_st_next(config_tbl_hdl_t *hdl, MYSQL **dbc, void **uptr)
     hdl->istorage++;
 
     return true;
+}
+
+void config_tbl_st_set_uptr(config_tbl_hdl_t *hdl, void *uptr)
+{
+    hdl->table->storage_uptrs[hdl->istorage] = uptr;
 }

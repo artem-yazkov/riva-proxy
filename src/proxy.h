@@ -17,8 +17,7 @@ typedef struct proxy_cfg_db {
 typedef struct proxy_cfg {
     char            lhost   [PROXY_CFG_NAME_MAXLEN];
     int             lport;
-    proxy_cfg_db_t *db;
-    int             db_cnt;
+    proxy_cfg_db_t  dbcfg;
     int             logtypes;
     int             limit;
 } proxy_cfg_t;

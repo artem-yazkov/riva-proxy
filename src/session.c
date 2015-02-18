@@ -9,6 +9,7 @@
 #include <stdlib.h>
 
 #include "aux.h"
+#include "config.h"
 #include "session.h"
 #include "protocol.h"
 
@@ -28,6 +29,8 @@ typedef struct rowset {
     size_t     sz;
 } rowset_t;
 static rowset_t rowset;
+
+static config_tbl_hdl_t *tblhdl;
 
 static void
 orderset_add(orderset_t *oset, int fnum, int otype)
@@ -67,6 +70,38 @@ rowset_compare(const void *a, const void *b)
                 return -cres;
             }
         }
+    }
+    return 0;
+}
+
+static int
+query_parse_from(char *query, session_t *session)
+{
+    static char  *lquery;
+    static size_t lquery_sz;
+
+    if (lquery_sz < (strlen(query) + 1)) {
+        lquery_sz = strlen(query) + 1;
+        lquery = realloc(lquery, lquery_sz);
+    }
+
+    int q, lq;
+    for (q = 0, lq = 0; query[q] != '\0'; q++) {
+        if (!(isspace(query[q]) && isspace(query[q+1]))) {
+            lquery[lq++] = tolower(query[q]);
+        }
+    }
+    lquery[lq] = '\0';
+
+    char fneedle[] = " from ";
+    char *fstraw = lquery;
+    fstraw = strstr(fstraw, fneedle);
+    if (fstraw == NULL) {
+        return -1;
+    }
+    char *tblname = fstraw + sizeof(fneedle);
+    if (!config_tbl_search(tblname, &tblhdl)) {
+        return -1;
     }
     return 0;
 }
@@ -129,11 +164,15 @@ query_parse(char *query, session_t *session)
             field_post++;
         }
 
+        MYSQL       *mconn;
         MYSQL_FIELD *mfield;
+        MYSQL_RES   *mres;
         int          ifield = 0;
         int          fieldnum = -1;
-        mysql_field_seek(session->mres[0], 0);
-        while ((mfield = mysql_fetch_field(session->mres[0]))) {
+        config_tbl_st_first(tblhdl);
+        config_tbl_st_next(tblhdl, &mconn, (void**)&mres);
+
+        while ((mfield = mysql_fetch_field(mres))) {
             if (strcmp(mfield->name, field) == 0) {
                 fieldnum = ifield;
                 break;
@@ -158,15 +197,19 @@ query_parse(char *query, session_t *session)
 static void
 __query_execute_err(char *errstr, int erridb, struct evbuffer *output, session_t *session)
 {
-    aux_log(AUX_LT_WARN, "error at backend %s: %s", session->cfg->db[erridb].url, errstr);
+    //aux_log(AUX_LT_WARN, "error at backend %s: %s", session->cfg->db[erridb].url, errstr);
 
     static proto_resp_err_t rerr;
     rerr.message.data = errstr;
     rerr.message.len = strlen(rerr.message.data);
     proto_pack_write(output, PROTO_RESP_ERR, &rerr, sizeof(rerr));
 
-    for (int idb = 0; idb <= erridb; idb++) {
-        mysql_free_result(session->mres[idb]);
+    MYSQL       *mconn;
+    MYSQL_RES   *mres;
+
+    config_tbl_st_first(tblhdl);
+    while (config_tbl_st_next(tblhdl, &mconn, (void**)&mres)) {
+        mysql_free_result(mres);
     }
 }
 
@@ -178,20 +221,29 @@ query_execute(struct evbuffer *output, char *query, session_t *session)
 
     aux_log(AUX_LT_QUERY, "%s", query);
 
-    for (int idb = 0; idb < session->db_cnt; idb++) {
-        int qresult = mysql_query(session->dbc[idb], query);
+    if (query_parse_from(query, session) < 0) {
+        return -1;
+    }
+
+    config_tbl_st_first(tblhdl);
+    MYSQL       *mconn;
+    MYSQL_RES   *mres;
+
+    while (config_tbl_st_next(tblhdl, &mconn, (void**)&mres)) {
+        int qresult = mysql_query(mconn, query);
         if (qresult == 0) {
-            session->mres[idb] = mysql_store_result(session->dbc[idb]);
+            mres = mysql_store_result(mconn);
         }
-        if (mysql_errno(session->dbc[idb]) > 0) {
-            __query_execute_err((char *)mysql_error(session->dbc[idb]), idb, output, session);
+        if (mysql_errno(mconn) > 0) {
+            __query_execute_err((char *)mysql_error(mconn), 0, output, session);
             return -1;
         }
-        if ((rfcount.fcount != 0) && (mysql_field_count(session->dbc[idb]) != rfcount.fcount)) {
-            __query_execute_err("inconsistent field numbers across backends", idb, output, session);
+        if ((rfcount.fcount != 0) && (mysql_field_count(mconn) != rfcount.fcount)) {
+            __query_execute_err("inconsistent field numbers across backends", 0, output, session);
             return -1;
         }
-        rfcount.fcount = mysql_field_count(session->dbc[idb]);
+        rfcount.fcount = mysql_field_count(mconn);
+        config_tbl_st_set_uptr(tblhdl, mres);
     }
     if (rfcount.fcount == 0) {
         static proto_resp_ok_t rok;
@@ -202,12 +254,13 @@ query_execute(struct evbuffer *output, char *query, session_t *session)
 
 
     rowset.count = 0;
-    for (int idb = 0; idb < session->db_cnt; idb++) {
-        if (session->mres[idb] == NULL) {
+    config_tbl_st_first(tblhdl);
+    while (config_tbl_st_next(tblhdl, &mconn, (void**)&mres)) {
+        if (mres == NULL) {
             continue;
         }
         MYSQL_ROW  mrow;
-        while ((mrow = mysql_fetch_row(session->mres[idb]))) {
+        while ((mrow = mysql_fetch_row(mres))) {
             if ((session->cfg->limit) && (rowset.count > session->cfg->limit)) {
                 break;
             }
@@ -227,7 +280,9 @@ query_execute(struct evbuffer *output, char *query, session_t *session)
 
     MYSQL_FIELD *mfield;
     static proto_resp_field_t  rfield;
-    while ((mfield = mysql_fetch_field(session->mres[0]))) {
+    config_tbl_st_first(tblhdl);
+    config_tbl_st_next(tblhdl, &mconn, (void**)&mres);
+    while ((mfield = mysql_fetch_field(mres))) {
         rfield.catalog.data = mfield->catalog;
         rfield.catalog.len  = strlen(rfield.catalog.data);
         rfield.name.data    = mfield->name;
@@ -262,11 +317,12 @@ query_execute(struct evbuffer *output, char *query, session_t *session)
     }
     proto_pack_write(output, PROTO_RESP_EOF, &reof, sizeof(reof));
 
-    for (int idb = 0; idb < session->db_cnt; idb++) {
-        if (session->mres[idb] == NULL) {
+    config_tbl_st_first(tblhdl);
+    while (config_tbl_st_next(tblhdl, &mconn, (void**)&mres)) {
+        if (mres == NULL) {
             continue;
         }
-        mysql_free_result(session->mres[idb]);
+        mysql_free_result(mres);
     }
 
     aux_log(AUX_LT_STAT, "Fields: %lu, Rows: %d", rfcount.fcount, rowset.count);
@@ -342,10 +398,6 @@ cb_event(struct bufferevent *bev, short events, void *ctx)
 
     if (events & (BEV_EVENT_EOF | BEV_EVENT_ERROR)) {
         session_t *session = ctx;
-        for (int idb = 0; idb < session->db_cnt; idb++) {
-            mysql_close(session->dbc[idb]);
-        }
-        free(session->dbc);
         free(session);
         bufferevent_free(bev);
         aux_log(AUX_LT_INFO, "close connection");
@@ -359,25 +411,6 @@ session_accept_conn(struct evconnlistener *listener,
 {
     session_t *session = calloc(1, sizeof(session_t));
     session->cfg = ctx;
-    session->db_cnt = session->cfg->db_cnt;
-    session->dbc = calloc(session->db_cnt, sizeof(session->dbc[0]));
-    session->mres = calloc(session->db_cnt, sizeof(session->mres[0]));
-
-    for (int idb = 0; idb < session->db_cnt; idb++) {
-        session->dbc[idb] = mysql_init(NULL);
-        MYSQL *rconn = mysql_real_connect(session->dbc[idb],
-                session->cfg->db[idb].host,
-                session->cfg->db[idb].username,
-               (session->cfg->db[idb].password[0] != '\n') ? session->cfg->db[idb].password : NULL,
-                session->cfg->db[idb].database,
-                session->cfg->db[idb].port,
-                NULL, 0);
-        if (rconn == NULL) {
-            aux_log(AUX_LT_ERROR, "Can't connect to %s", session->cfg->db[idb].url);
-            event_base_loopexit(evconnlistener_get_base(listener), NULL);
-        }
-        session->dbc[idb]->reconnect = 1;
-    }
 
     /* We got a new connection! Set up a bufferevent for it. */
     struct event_base *base = evconnlistener_get_base(listener);
