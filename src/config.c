@@ -46,7 +46,7 @@ const char *QUERY_GET_TBL_STORAGE =
         "SELECT d.type, d.name, s.path AS addr, s.mode "
         "FROM map_data2storage AS d "
         "JOIN sys_storages AS s ON d.storg_distr=s.id "
-        "WHERE s.type = 'mysql'AND (s.mode = 'r-' OR s.mode = 'rw') "
+        "WHERE s.type = 'mysql' AND (s.mode = 'r-' OR s.mode = 'rw') "
         "ORDER BY d.name";
 
 static int __add_tbl_storage(char *tbl, char *addr)
@@ -219,5 +219,5 @@ bool config_tbl_st_next(config_tbl_hdl_t *hdl, MYSQL **dbc, void **uptr)
 
 void config_tbl_st_set_uptr(config_tbl_hdl_t *hdl, void *uptr)
 {
-    hdl->table->storage_uptrs[hdl->istorage] = uptr;
+    hdl->table->storage_uptrs[hdl->istorage-1] = uptr;
 }

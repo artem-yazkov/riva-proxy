@@ -6,6 +6,7 @@
 
 #include <ctype.h>
 #include <string.h>
+#include <stdint.h>
 #include <stdlib.h>
 
 #include "aux.h"
@@ -37,8 +38,8 @@ orderset_add(orderset_t *oset, int fnum, int otype)
 {
     if (oset->count == oset->sz) {
         oset->sz += ORDERSET_INC;
-        oset->fnums = realloc(oset->fnums, oset->sz);
-        oset->otypes = realloc(oset->otypes, oset->sz);
+        oset->fnums = realloc(oset->fnums, oset->sz * sizeof(oset->fnums[0]));
+        oset->otypes = realloc(oset->otypes, oset->sz * sizeof(oset->otypes[0]));
     }
     oset->fnums[oset->count] = fnum;
     oset->otypes[oset->count] = otype;
@@ -50,7 +51,7 @@ rowset_add(rowset_t *rset, MYSQL_ROW row)
 {
     if (rset->count == rset->sz) {
         rset->sz += ROWSET_INC;
-        rset->rows = realloc(rset->rows, rset->sz);
+        rset->rows = realloc(rset->rows, rset->sz * sizeof(rset->rows[0]));
     }
     rset->rows[rset->count] = row;
     rset->count++;
@@ -59,10 +60,18 @@ rowset_add(rowset_t *rset, MYSQL_ROW row)
 static int
 rowset_compare(const void *a, const void *b)
 {
-    MYSQL_ROW arow = (void *) a;
-    MYSQL_ROW brow = (void *) b;
+    MYSQL_ROW *parow = (void *)a;
+    MYSQL_ROW *pbrow = (void *)b;
+    MYSQL_ROW  arow = *parow;
+    MYSQL_ROW  brow = *pbrow;
     for (int iord = 0; iord < orderset.count; iord++) {
-        int cres = strcmp(arow[orderset.fnums[iord]], brow[orderset.fnums[iord]]);
+        if (arow[orderset.fnums[iord]] == NULL) {
+            return 1;
+        }
+        if (brow[orderset.fnums[iord]] == NULL) {
+            return -1;
+        }
+        int cres = strcmp(arow[orderset.fnums[iord]], brow[orderset.fnums[iord]]);;
         if (cres != 0) {
             if (orderset.otypes[iord] == 0) {
                 return cres;
@@ -71,6 +80,7 @@ rowset_compare(const void *a, const void *b)
             }
         }
     }
+
     return 0;
 }
 
@@ -93,16 +103,24 @@ query_parse_from(char *query, session_t *session)
     }
     lquery[lq] = '\0';
 
-    char fneedle[] = " from ";
+    char fneedle[] = " from `";
     char *fstraw = lquery;
     fstraw = strstr(fstraw, fneedle);
     if (fstraw == NULL) {
         return -1;
     }
-    char *tblname = fstraw + sizeof(fneedle);
+    char *tblname = fstraw + sizeof(fneedle) - 1;
+
+    for (int ic = 0; (tblname[ic] != '\0'); ic++) {
+        if (tblname[ic] == '`') {
+            tblname[ic] = '\0';
+            break;
+        }
+    }
     if (!config_tbl_search(tblname, &tblhdl)) {
         return -1;
     }
+
     return 0;
 }
 
@@ -172,6 +190,7 @@ query_parse(char *query, session_t *session)
         config_tbl_st_first(tblhdl);
         config_tbl_st_next(tblhdl, &mconn, (void**)&mres);
 
+        mysql_field_seek(mres, 0);
         while ((mfield = mysql_fetch_field(mres))) {
             if (strcmp(mfield->name, field) == 0) {
                 fieldnum = ifield;
@@ -187,9 +206,11 @@ query_parse(char *query, session_t *session)
         if (strncmp(field_post, "desc", 4) == 0) {
             ordertype = 1;
         }
+
         orderset_add(&orderset, fieldnum, ordertype);
 
         field = strtok(NULL, ",");
+        break;
     }
     return 0;
 }
@@ -228,7 +249,6 @@ query_execute(struct evbuffer *output, char *query, session_t *session)
     config_tbl_st_first(tblhdl);
     MYSQL       *mconn;
     MYSQL_RES   *mres;
-
     while (config_tbl_st_next(tblhdl, &mconn, (void**)&mres)) {
         int qresult = mysql_query(mconn, query);
         if (qresult == 0) {
@@ -269,8 +289,9 @@ query_execute(struct evbuffer *output, char *query, session_t *session)
     }
 
     query_parse(query, session);
+
     if (orderset.count > 0) {
-        qsort(rowset.rows, rowset.count, sizeof(rowset.rows[0]), rowset_compare);
+        qsort(rowset.rows, rowset.count, sizeof(MYSQL_ROW), rowset_compare);
     }
 
     /*
@@ -282,6 +303,7 @@ query_execute(struct evbuffer *output, char *query, session_t *session)
     static proto_resp_field_t  rfield;
     config_tbl_st_first(tblhdl);
     config_tbl_st_next(tblhdl, &mconn, (void**)&mres);
+    mysql_field_seek(mres, 0);
     while ((mfield = mysql_fetch_field(mres))) {
         rfield.catalog.data = mfield->catalog;
         rfield.catalog.len  = strlen(rfield.catalog.data);
@@ -310,8 +332,8 @@ query_execute(struct evbuffer *output, char *query, session_t *session)
     for (int irow = 0; irow < rowlimit; irow++) {
         MYSQL_ROW  mrow = rowset.rows[irow];
         for(int icell = 0; icell < rfcount.fcount; icell++) {
-            rrow.values[irow].data = mrow[icell];
-            rrow.values[irow].len = (mrow[icell]) ? strlen(mrow[icell]) : 0;
+            rrow.values[icell].data = mrow[icell];
+            rrow.values[icell].len = (mrow[icell]) ? strlen(mrow[icell]) : 0;
         }
         proto_pack_write(output, PROTO_RESP_ROW, &rrow, sizeof(rrow));
     }
