@@ -6,26 +6,26 @@
 #include "aux.h"
 #include "config.h"
 
-typedef struct __storage __storage_t;
-struct __storage {
+typedef struct storage storage_t;
+struct storage {
     char        *addr;
     char        *addr_url;
     MYSQL       *dbdata;
-    __storage_t *next;
+    storage_t   *next;
 };
-static __storage_t *__storages;
+static storage_t *storages;
 
-typedef struct __table __table_t;
-struct __table {
-    char         *name;
-    __storage_t **storages;
-    uint32_t      storage_cnt;
-    void        **storage_uptrs;
-    __table_t    *next;
+typedef struct table table_t;
+struct table {
+    char        *name;
+    storage_t  **storages;
+    uint32_t     storage_cnt;
+    void       **storage_uptrs;
+    table_t     *next;
 };
-static __table_t *__tables;
+static table_t *tables;
 
-typedef struct __config {
+typedef struct config {
     char *host;
     int   port;
     char *user;
@@ -34,11 +34,11 @@ typedef struct __config {
 
     char *url;
     MYSQL *dbcfg;
-} __config_t;
-static __config_t *__config;
+} config_t;
+static config_t *config;
 
 struct config_tbl_hdl {
-    __table_t *table;
+    table_t   *table;
     uint32_t   istorage;
 };
 const char *CONFIG_DB_NAME = "data";
@@ -51,32 +51,32 @@ const char *QUERY_GET_TBL_STORAGE =
 
 static int __add_tbl_storage(char *tbl, char *addr)
 {
-    __storage_t *istor, *istor_prev;
-    __table_t   *itbl, *itbl_prev;
+    storage_t *istor, *istor_prev;
+    table_t   *itbl, *itbl_prev;
 
     /* storage search/insert */
-    for (istor = __storages, istor_prev = NULL;
+    for (istor = storages, istor_prev = NULL;
          (istor != NULL) && (strcmp(istor->addr, addr) != 0);
          istor_prev = istor, istor = istor->next);
     if (istor == NULL) {
-        istor = calloc(1, sizeof(__storage_t));
+        istor = calloc(1, sizeof(storage_t));
         istor->addr = strdup(addr);
         if (istor_prev == NULL) {
-            __storages = istor;
+            storages = istor;
         } else {
             istor_prev->next = istor;
         }
     }
 
     /* table search/insert */
-    for (itbl = __tables, itbl_prev = NULL;
+    for (itbl = tables, itbl_prev = NULL;
          (itbl != NULL) && (strcmp(itbl->name, tbl) != 0);
          itbl_prev = itbl, itbl = itbl->next);
     if (itbl == NULL) {
-        itbl = calloc(1, sizeof(__table_t));
+        itbl = calloc(1, sizeof(table_t));
         itbl->name = strdup(tbl);
         if (itbl_prev == NULL) {
-            __tables = itbl;
+            tables = itbl;
         } else {
             itbl_prev->next = itbl;
         }
@@ -99,43 +99,43 @@ static int __add_tbl_storage(char *tbl, char *addr)
 
 int config_init(char *host, int port, char *user, char *pass, char *dbname)
 {
-    /* Initialize __config structure */
-    __config = calloc(1, sizeof(__config_t));
+    /* Initialize config structure */
+    config = calloc(1, sizeof(config_t));
 
-    __config->host = strdup(host);
-    __config->port = (port <= 0) ? 3306 : port;
-    __config->user = strdup(user);
-    __config->pass = strdup(pass);
-    __config->dbname = strdup(dbname);
+    config->host = strdup(host);
+    config->port = (port <= 0) ? 3306 : port;
+    config->user = strdup(user);
+    config->pass = strdup(pass);
+    config->dbname = strdup(dbname);
     static char url[PATH_MAX];
     snprintf(url, sizeof(url)-1, "%s:%s@%s:%d/%s",
-            __config->user,
-            __config->pass,
-            __config->host,
-            __config->port,
-            __config->dbname);
-    __config->url = strdup(url);
+            config->user,
+            config->pass,
+            config->host,
+            config->port,
+            config->dbname);
+    config->url = strdup(url);
 
     /* Retrieve info about table storages */
-    __config->dbcfg = mysql_init(NULL);
+    config->dbcfg = mysql_init(NULL);
     void *cres = mysql_real_connect(
-            __config->dbcfg,
-            __config->host,
-            __config->user,
-            __config->pass,
-            __config->dbname,
-            __config->port,
+            config->dbcfg,
+            config->host,
+            config->user,
+            config->pass,
+            config->dbname,
+            config->port,
             NULL, 0);
     if (cres == NULL) {
-        aux_log(AUX_LT_ERROR, "Can't connect to <%s> : %s", __config->url, mysql_error(__config->dbcfg));
+        aux_log(AUX_LT_ERROR, "Can't connect to <%s> : %s", config->url, mysql_error(config->dbcfg));
         return -1;
     }
-    __config->dbcfg->reconnect = 1;
+    config->dbcfg->reconnect = 1;
 
-    int qresult = mysql_query(__config->dbcfg, QUERY_GET_TBL_STORAGE);
-    if (mysql_errno(__config->dbcfg) > 0) {
+    int qresult = mysql_query(config->dbcfg, QUERY_GET_TBL_STORAGE);
+    if (mysql_errno(config->dbcfg) > 0) {
         aux_log(AUX_LT_ERROR, "[%s]: %s (query: %s)",
-                __config->url, (char *)mysql_error(__config->dbcfg), QUERY_GET_TBL_STORAGE);
+                config->url, (char *)mysql_error(config->dbcfg), QUERY_GET_TBL_STORAGE);
         return -1;
     }
     if (qresult != 0) {
@@ -143,9 +143,9 @@ int config_init(char *host, int port, char *user, char *pass, char *dbname)
     }
 
     MYSQL_RES *mresult;
-    mresult = mysql_store_result(__config->dbcfg);
+    mresult = mysql_store_result(config->dbcfg);
 
-    /* Fill __storages, __tables lists */
+    /* Fill storages, tables lists */
     char     *tbl_name = NULL;
     MYSQL_ROW row;
     while ((row = mysql_fetch_row(mresult))) {
@@ -157,13 +157,13 @@ int config_init(char *host, int port, char *user, char *pass, char *dbname)
     mysql_free_result(mresult);
 
     /* Connect to the storages */
-    for (__storage_t *istor = __storages; istor != NULL; istor = istor->next) {
+    for (storage_t *istor = storages; istor != NULL; istor = istor->next) {
         static char url[PATH_MAX];
         snprintf(url, sizeof(url)-1, "%s:%s@%s:%d/%s",
-                __config->user,
-                __config->pass,
+                config->user,
+                config->pass,
                 istor->addr,
-                __config->port,
+                config->port,
                 CONFIG_DB_NAME);
         istor->addr_url = strdup(url);
 
@@ -171,10 +171,10 @@ int config_init(char *host, int port, char *user, char *pass, char *dbname)
         void *cres = mysql_real_connect(
                 istor->dbdata,
                 istor->addr,
-                __config->user,
-                __config->pass,
+                config->user,
+                config->pass,
                 CONFIG_DB_NAME,
-                __config->port,
+                config->port,
                 NULL, 0);
         if (cres == NULL) {
             aux_log(AUX_LT_ERROR, "Can't connect to: <%s>: %s", istor->addr_url, mysql_error(istor->dbdata));
@@ -189,7 +189,7 @@ int config_init(char *host, int port, char *user, char *pass, char *dbname)
 bool config_tbl_search(char *name, config_tbl_hdl_t **hdl)
 {
     *hdl = calloc(1, sizeof(config_tbl_hdl_t));
-    for ((*hdl)->table = __tables;
+    for ((*hdl)->table = tables;
         ((*hdl)->table != NULL) && (strcmp((*hdl)->table->name, name) != 0);
          (*hdl)->table = (*hdl)->table->next);
     if ((*hdl)->table == NULL) {
@@ -210,8 +210,12 @@ bool config_tbl_st_next(config_tbl_hdl_t *hdl, MYSQL **dbc, void **uptr)
     if (hdl->istorage >= hdl->table->storage_cnt) {
         return false;
     }
-    *dbc = hdl->table->storages[hdl->istorage]->dbdata;
-    *uptr = hdl->table->storage_uptrs[hdl->istorage];
+    if (dbc != NULL) {
+        *dbc = hdl->table->storages[hdl->istorage]->dbdata;
+    }
+    if (uptr != NULL) {
+        *uptr = hdl->table->storage_uptrs[hdl->istorage];
+    }
     hdl->istorage++;
 
     return true;
