@@ -26,8 +26,17 @@ help(char *errstr)
 static void
 process_args(int argc, char * const argv[])
 {
+    /* proxy_cfg initialization */
     strncpy(proxy_cfg.lhost, PROXY_CFG_LISTEN_HOST, sizeof(proxy_cfg.lhost) - 1);
     proxy_cfg.lport = PROXY_CFG_LISTEN_PORT;
+    
+    strncpy(proxy_cfg.dbcfg.host, PROXY_CFG_DB_HOST, sizeof(proxy_cfg.dbcfg.host) - 1);
+    proxy_cfg.dbcfg.port = PROXY_CFG_DB_PORT;
+    strncpy(proxy_cfg.dbcfg.database, PROXY_CFG_DB_NAME, sizeof(proxy_cfg.dbcfg.database) - 1);
+    strncpy(proxy_cfg.dbcfg.username, PROXY_CFG_DB_USER, sizeof(proxy_cfg.dbcfg.username) - 1);
+    strncpy(proxy_cfg.dbcfg.password, PROXY_CFG_DB_PASS, sizeof(proxy_cfg.dbcfg.password) - 1);
+    strncpy(proxy_cfg.dbcfg.url,      PROXY_CFG_DB_URL,  sizeof(proxy_cfg.dbcfg.url) - 1);
+
     aux_lt_mask = proxy_cfg.logtypes = AUX_LT_DEFAULT;
 
     static struct option options[] = {
@@ -132,11 +141,6 @@ process_args(int argc, char * const argv[])
         if (opt == 'L') {
             proxy_cfg.limit = atoi(optarg);
         }
-    }
-
-    if (strlen(proxy_cfg.dbcfg.host) == 0) {
-        help("'--config' argument must be specified");
-        exit(1);
     }
 }
 
