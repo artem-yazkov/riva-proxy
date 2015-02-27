@@ -12,6 +12,9 @@
 #define PROXY_CFG_LISTEN_PORT 9876
 #define PROXY_CFG_NAME_MAXLEN 64
 
+#define PROXY_VER_MAJOR       0
+#define PROXY_VER_MINOR       1
+
 typedef struct proxy_cfg_db {
     char *url;
     char database[PROXY_CFG_NAME_MAXLEN];

@@ -16,11 +16,32 @@
 static proxy_cfg_t proxy_cfg;
 
 static void
-help(char *errstr)
+help(char *argv0, char *errstr)
 {
     if (errstr != NULL) {
         printf("%s\n", errstr);
+        printf("Type '%s --help' to show short options list\n", argv0);
+        return;
     }
+    printf("Usage:\n  %s [OPTIONS]\n", argv0);
+    printf("\n");
+    printf("Options:\n");
+    printf("  --help                             Show this help message\n");
+    printf("  --version                          Show version\n");
+    printf("  --logtypes  typeA[,typeB,...]      Setup log output mask\n");
+    printf("    where typeX can be: error, warn, info, query, stat, none, all\n\n");
+    printf("  --limit N                          Limit merged rowset to N rows\n");
+    printf("  --listen  url                      Listen locator: address:port\n");
+    printf("                                     Default: %s:%d\n\n", PROXY_CFG_LISTEN_HOST, PROXY_CFG_LISTEN_PORT);
+    printf("  --config  url                      CFG DB locator: uname:pass@host:port/dbname\n");
+    printf("                                     Default: %s\n", PROXY_CFG_DB_URL);
+    printf("\n");
+}
+
+static void
+version()
+{
+    printf("riva-proxy version %u.%u\n\n", PROXY_VER_MAJOR, PROXY_VER_MINOR);
 }
 
 static void
@@ -35,7 +56,7 @@ process_args(int argc, char * const argv[])
     strncpy(proxy_cfg.dbcfg.database, PROXY_CFG_DB_NAME, sizeof(proxy_cfg.dbcfg.database) - 1);
     strncpy(proxy_cfg.dbcfg.username, PROXY_CFG_DB_USER, sizeof(proxy_cfg.dbcfg.username) - 1);
     strncpy(proxy_cfg.dbcfg.password, PROXY_CFG_DB_PASS, sizeof(proxy_cfg.dbcfg.password) - 1);
-    strncpy(proxy_cfg.dbcfg.url,      PROXY_CFG_DB_URL,  sizeof(proxy_cfg.dbcfg.url) - 1);
+    //strncpy(proxy_cfg.dbcfg.url,      PROXY_CFG_DB_URL,  sizeof(proxy_cfg.dbcfg.url) - 1);
 
     aux_lt_mask = proxy_cfg.logtypes = AUX_LT_DEFAULT;
 
@@ -52,6 +73,16 @@ process_args(int argc, char * const argv[])
     int opt;
 
     while ((opt = getopt_long_only(argc, argv, "hvl:L:a:c:", options, NULL)) != -1) {
+        /* Help */
+        if (opt == 'h') {
+            help(argv[0], NULL);
+            exit(0);
+        }
+        /* Version */
+        if (opt == 'v') {
+            version();
+            exit(0);
+        }
         /* Listen address */
         if (opt == 'a') {
             int args;
@@ -70,7 +101,7 @@ process_args(int argc, char * const argv[])
             if (args == 1) {
                 continue;
             }
-            help("Incorrect proxy-address");
+            help(argv[0], "Incorrect proxy-address");
             exit(1);
         }
         /* Connection to the config DB */
@@ -104,12 +135,8 @@ process_args(int argc, char * const argv[])
                 continue;
             }
             /* incorrect pattern */
-            help("Incorrect backend");
+            help(argv[0], "Incorrect backend");
             exit(1);
-        }
-        /* Help */
-        if (opt == 'h') {
-            help(NULL);
         }
         /* Logtypes */
         if (opt == 'l') {
@@ -131,7 +158,7 @@ process_args(int argc, char * const argv[])
                 } else if (!strcasecmp(tok, "all")) {
                     proxy_cfg.logtypes |= AUX_LT_ALL;
                 } else {
-                    help("Incorrect logtypes");
+                    help(argv[0], "Incorrect logtypes");
                 }
                 tok = strtok(NULL, ",");
             }
