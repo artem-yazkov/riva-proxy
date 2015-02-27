@@ -56,7 +56,7 @@ process_args(int argc, char * const argv[])
     strncpy(proxy_cfg.dbcfg.database, PROXY_CFG_DB_NAME, sizeof(proxy_cfg.dbcfg.database) - 1);
     strncpy(proxy_cfg.dbcfg.username, PROXY_CFG_DB_USER, sizeof(proxy_cfg.dbcfg.username) - 1);
     strncpy(proxy_cfg.dbcfg.password, PROXY_CFG_DB_PASS, sizeof(proxy_cfg.dbcfg.password) - 1);
-    //strncpy(proxy_cfg.dbcfg.url,      PROXY_CFG_DB_URL,  sizeof(proxy_cfg.dbcfg.url) - 1);
+    strncpy(proxy_cfg.dbcfg.url,      PROXY_CFG_DB_URL,  sizeof(proxy_cfg.dbcfg.url) - 1);
 
     aux_lt_mask = proxy_cfg.logtypes = AUX_LT_DEFAULT;
 
@@ -108,7 +108,7 @@ process_args(int argc, char * const argv[])
         if (opt == 'c') {
             proxy_cfg_db_t *db = &proxy_cfg.dbcfg;
             memset(db, 0, sizeof(proxy_cfg_db_t));
-            db->url = strdup(optarg);
+            strncpy(db->url, optarg, sizeof(db->url) - 1);
 
             int args;
             /* all arguments */

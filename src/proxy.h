@@ -16,7 +16,7 @@
 #define PROXY_VER_MINOR       1
 
 typedef struct proxy_cfg_db {
-    char *url;
+    char url[PROXY_CFG_NAME_MAXLEN];
     char database[PROXY_CFG_NAME_MAXLEN];
     char username[PROXY_CFG_NAME_MAXLEN];
     char password[PROXY_CFG_NAME_MAXLEN];
