@@ -9,6 +9,7 @@
 
 #include "aux.h"
 #include "config.h"
+#include "config-buildtime.h"
 #include "protocol.h"
 #include "proxy.h"
 #include "session.h"
@@ -41,7 +42,7 @@ help(char *argv0, char *errstr)
 static void
 version()
 {
-    printf("riva-proxy version %u.%u\n\n", PROXY_VER_MAJOR, PROXY_VER_MINOR);
+    printf("riva-proxy version %s-%s\n\n", PROXY_VERSION, PROXY_VERSION_GIT);
 }
 
 static void

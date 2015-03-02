@@ -1,0 +1,5 @@
+#define PROXY_VERSION       "0.1.0"
+#define PROXY_VERSION_GIT   "${GIT_VERSION}"
+
+#define PROXY_URL           "http://rivasense.com"
+#define PROXY_BUGREPORT     "artem.yazkov@gmail.com"
